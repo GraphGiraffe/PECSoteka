@@ -58,12 +58,39 @@ def rect(x,y,w,h,r,color,stroke=None,sw=0):
 def ellipse(x,y,r,color):
     parts.append(f'<circle cx="{x}" cy="{y}" r="{r}" fill="{color}"/>')
     draw.ellipse(((x-r)*2,(y-r)*2,(x+r)*2,(y+r)*2),fill=color)
-def picture(x,y,size,color):
+def polygon(points,color):
+    parts.append('<polygon points="'+' '.join(f'{a},{b}' for a,b in points)+f'" fill="{color}"/>')
+    draw.polygon([(int(a*2),int(b*2)) for a,b in points],fill=color)
+def line(points,color,width):
+    parts.append('<polyline points="'+' '.join(f'{a},{b}' for a,b in points)+f'" fill="none" stroke="{color}" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round"/>')
+    draw.line([(int(a*2),int(b*2)) for a,b in points],fill=color,width=max(1,int(width*2)),joint='curve')
+def picture(x,y,size,color,kind):
     rect(x,y,size,size,10,'#fffef8','#8ba280',3)
-    ellipse(x+size*.72,y+size*.27,size*.10,color)
-    pts=[(x+size*.15,y+size*.78),(x+size*.4,y+size*.42),(x+size*.61,y+size*.68),(x+size*.76,y+size*.52),(x+size*.88,y+size*.78)]
-    parts.append('<polygon points="'+' '.join(f'{a},{b}' for a,b in pts)+'" fill="#93ae76"/>')
-    draw.polygon([(int(a*2),int(b*2)) for a,b in pts],fill='#93ae76')
+    p=lambda a,b:(x+size*a,y+size*b)
+    dot=lambda a,b,r,c:ellipse(*p(a,b),size*r,c)
+    poly=lambda pts,c:polygon([p(a,b) for a,b in pts],c)
+    stroke=lambda pts,c='#356951',w=.04:line([p(a,b) for a,b in pts],c,size*w)
+    if kind=='apple':
+        dot(.42,.59,.22,'#eb795c'); dot(.59,.59,.22,'#eb795c')
+        stroke([(.5,.39),(.54,.23)])
+        poly([(.54,.29),(.62,.17),(.75,.2),(.65,.32)],'#93ae76')
+    elif kind=='ball':
+        dot(.5,.5,.32,'#a6bcd1')
+        poly([(.5,.34),(.66,.45),(.6,.63),(.4,.63),(.34,.45)],'#356951')
+        stroke([(.5,.34),(.5,.2)]);stroke([(.66,.45),(.8,.4)]);stroke([(.6,.63),(.7,.76)]);stroke([(.4,.63),(.3,.76)]);stroke([(.34,.45),(.2,.4)])
+    elif kind=='person':
+        dot(.5,.32,.15,'#e7bb98')
+        rect(*p(.26,.51),size*.48,size*.31,size*.1,'#93ae76')
+    elif kind=='water':
+        poly([(.29,.24),(.71,.24),(.65,.8),(.35,.8)],'#dcebf0')
+        poly([(.32,.48),(.68,.48),(.65,.8),(.35,.8)],'#93bed1')
+        stroke([(.29,.24),(.71,.24),(.65,.8),(.35,.8),(.29,.24)])
+    elif kind=='heart':
+        dot(.38,.4,.18,'#eb795c');dot(.62,.4,.18,'#eb795c')
+        poly([(.21,.43),(.79,.43),(.5,.82)],'#eb795c')
+    elif kind=='music':
+        stroke([(.42,.7),(.42,.28),(.75,.2),(.75,.61)],'#356951',.07)
+        dot(.31,.73,.13,'#356951');dot(.64,.64,.13,'#356951')
 
 rect(108,72,295,366,32,'#356951')
 for y,color in [(126,'#eb795c'),(196,'#e5ba60'),(266,'#a6bcd1')]: rect(386,y,40,52,10,color)
@@ -74,10 +101,10 @@ for y in [143,231,319]:
     draw.arc((93*2,y*2,123*2,(y+30)*2),90,270,fill='#263c36',width=18)
     draw.line((108*2,y*2,140*2,y*2),fill='#263c36',width=18)
     draw.line((108*2,(y+30)*2,140*2,(y+30)*2),fill='#263c36',width=18)
-picture(163,132,70,'#eb795c'); picture(265,132,70,'#e5ba60')
-picture(163,231,70,'#e5ba60'); picture(265,231,70,'#a6bcd1')
+picture(163,132,70,'#eb795c','apple'); picture(265,132,70,'#e5ba60','ball')
+picture(163,231,70,'#e5ba60','person'); picture(265,231,70,'#a6bcd1','water')
 rect(153,345,218,54,11,'#d9e7ad')
-picture(164,352,39,'#eb795c'); picture(217,352,39,'#e5ba60')
+picture(164,352,39,'#eb795c','heart'); picture(217,352,39,'#e5ba60','music')
 parts.append('</svg>')
 (root / 'brand.svg').write_text(''.join(parts))
 for size, name in [(192, 'icon-192.png'), (512, 'icon-512.png'), (512, 'icon-maskable.png')]:
