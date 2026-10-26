@@ -60,6 +60,7 @@ function renderTools() {
 }
 function renderBoard() {
   const t = tab(), selected = new Set((editing ? buffer : album.settings.copyCards ? [] : communication).map(i => i.cardId));
+  $('#workspace').style.setProperty('--category-color', t.color);
   $('#album-heading').innerHTML = `<div class="heading-copy"><span class="category-dot" style="--tab-color:${t.color}" aria-hidden="true"></span><div><h1>${esc(t.title)}</h1><p>${editing ? 'Организуйте карточки. Изменения сохраняются автоматически.' : 'Выберите то, что хотите сказать'}</p></div></div>${editing ? btn('edit-tab', 'Изменить категорию', 'edit') : ''}`;
   $('#board').innerHTML = t.columns.map((col, n) => `<section class="column" data-column="${col.id}" data-tab="${t.id}" aria-label="Столбик ${n + 1}">
     ${editing ? `<div class="column-head"><span>Столбик ${n + 1}</span><div>${btn('column-left', 'Столбик влево', 'left', `data-column-id="${col.id}" ${n === 0 ? 'disabled' : ''}`)}${btn('delete-column', 'Удалить пустой столбик', 'close', `data-column-id="${col.id}" ${col.cardIds.length || t.columns.length === 1 ? 'disabled' : ''}`)}</div></div>` : ''}
@@ -354,7 +355,7 @@ function openSettings() {
   const voices = () => {
     if (!form.isConnected) return;
     const list = speech.voices(), previous = form.elements.voiceURI.value || s.voiceURI;
-    form.elements.voiceURI.innerHTML = '<option value="">Системный русский голос</option>' + list.map(v => `<option value="${esc(v.voiceURI)}">${esc(v.name)}${v.localService ? ' · на устройстве' : ' · сетевой'}</option>`).join('');
+    form.elements.voiceURI.innerHTML = '<option value="">Русский голос на устройстве</option>' + list.map(v => `<option value="${esc(v.voiceURI)}">${esc(v.name)}${v.localService ? ' · на устройстве' : ' · сетевой'}</option>`).join('');
     form.elements.voiceURI.value = previous;
     if (form.elements.voiceURI.selectedIndex < 0) form.elements.voiceURI.value = '';
     $('#voice-note').textContent = list.length ? 'Для офлайн-речи выберите голос, установленный на устройстве.' : 'Русский голос пока не найден. Добавьте русский голос в настройках устройства. Альбом работает и без речи.';

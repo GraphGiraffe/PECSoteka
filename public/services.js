@@ -29,8 +29,8 @@ export class Speech {
     if (!text) return;
     if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) throw Error('На этом устройстве нет синтеза речи');
     const token = this.token, u = new SpeechSynthesisUtterance(text), s = this.settings;
-    const voice = this.voices().find(v => v.voiceURI === s.voiceURI) || this.voices()[0];
-    if (!voice) throw Error('Русский голос не найден. Добавьте его в настройках устройства.');
+    const voice = this.voices().find(v => v.voiceURI === s.voiceURI) || this.voices().find(v => v.localService);
+    if (!voice) throw Error('Локальный русский голос не найден. Установите его на устройстве или явно выберите сетевой голос в настройках альбома.');
     u.voice = voice; u.lang = s.voiceLang; u.rate = s.rate; u.pitch = s.pitch; u.volume = s.speechVolume;
     u.onstart = () => { if (this.token === token) this.status(true); };
     u.onend = u.onerror = () => { if (this.token === token) this.status(false); };
