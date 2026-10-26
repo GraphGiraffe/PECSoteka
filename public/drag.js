@@ -1,5 +1,38 @@
 // Pointer-based drag state: idle → dragging → accepted/rejected → settling.
 // No album mutation happens until the controller accepts a concrete drop.
+export function enableWorkspacePan(area, content) {
+  let pan = null;
+  const cancel = () => {
+    if (pan) try { if (area.hasPointerCapture(pan.id)) area.releasePointerCapture(pan.id); } catch {}
+    pan = null; area.classList.remove('panning');
+  };
+  area.addEventListener('pointerdown', e => {
+    if (!e.isPrimary || e.button !== 0 || e.target.closest('button,input,select,a,textarea,summary')) return;
+    pan = { id: e.pointerId, x: e.clientX, y: e.clientY, left: content.scrollLeft, top: content.scrollTop };
+    area.setPointerCapture(e.pointerId); area.classList.add('panning'); e.preventDefault();
+  });
+  area.addEventListener('pointermove', e => {
+    if (!pan || e.pointerId !== pan.id) return;
+    content.scrollLeft = pan.left + pan.x - e.clientX;
+    content.scrollTop = pan.top + pan.y - e.clientY;
+    e.preventDefault();
+  });
+  document.addEventListener('pointerdown', e => { if (pan && pan.id !== e.pointerId) cancel(); });
+  area.addEventListener('pointerup', cancel);
+  area.addEventListener('pointercancel', cancel);
+  area.addEventListener('lostpointercapture', cancel);
+  for (const name of ['blur', 'resize', 'pagehide']) window.addEventListener(name, cancel);
+  area.addEventListener('wheel', e => {
+    if (e.ctrlKey) return;
+    const factor = e.deltaMode === 1 ? 20 : e.deltaMode === 2 ? content.clientHeight : 1;
+    let dx = e.deltaX * factor, dy = e.deltaY * factor;
+    if (e.shiftKey || content.scrollHeight <= content.clientHeight && content.scrollWidth > content.clientWidth) { dx += dy; dy = 0; }
+    const before = [content.scrollLeft, content.scrollTop];
+    content.scrollLeft += dx; content.scrollTop += dy;
+    if (before[0] !== content.scrollLeft || before[1] !== content.scrollTop) e.preventDefault();
+  }, { passive: false });
+}
+
 export class DragController {
   constructor({ identify, resolve, highlight, drop, tap, cue, motion }) {
     Object.assign(this, { identify, resolve, highlight, drop, tap, cue, motion });

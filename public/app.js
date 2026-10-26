@@ -1,7 +1,8 @@
 import { VERSION, uid, createAlbum, builtinIcons, numberToWords, randomInt, addToLine, homeOf, columnAt, moveCard, removeCard, phrase } from './domain.js';
 import { AlbumRepository, exportAlbum, importAlbum } from './storage.js';
 import { Feedback, Speech, readPhoto, cropPhoto } from './services.js';
-import { DragController } from './drag.js';
+import { DragController, enableWorkspacePan } from './drag.js';
+import { PWAController } from './pwa.js';
 
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -29,7 +30,7 @@ const range = (name, label, value, min, max, step = 1, suffix = '') => `<label c
 
 let repo, album, images = new Map(), imageURLs = new Map(), activeTab;
 let editing = false, communication = [], buffer = [], busy = false, speechActive = false;
-let feedback, speech, drag, lastActivity = Date.now(), installPrompt, swRegistration;
+let feedback, speech, drag, pwa, lastActivity = Date.now();
 let holdTimer, holdFrame, holdStart = 0, gateValue, gateFailures = 0, gateBlockedUntil = 0;
 let modalCleanup = null, returnFocus = null, newlyAdded = '', restored = '';
 let toastTimer;
@@ -55,7 +56,7 @@ function cardHTML(card, attrs = '', selected = false) {
 }
 function renderTools() {
   $('#tools').innerHTML = editing
-    ? `<span class="pill">Редактор · ${VERSION}</span>${btn('settings', 'Настройки альбома', 'settings')}<button class="button" data-action="finish">${icon('check')}<span>Готово</span></button>`
+    ? `<span class="pill">Редактор · ${VERSION}</span>${btn('settings', 'Настройки альбома', 'settings')}${pwa?.installed ? '' : btn('install', 'Установить приложение', 'download')}<button class="button" data-action="finish">${icon('check')}<span>Готово</span></button>`
     : `<span class="mode-label">${icon('cards')}Мой альбом</span><button class="icon-btn hold-button" id="edit-gate" aria-label="Удерживайте 2,3 секунды для входа в редактор" title="Удерживайте 2,3 секунды для входа в редактор"><span>${icon('lock')}</span></button>`;
 }
 function renderBoard() {
@@ -97,6 +98,7 @@ function render() {
     $(query)?.focus({ preventScroll: true });
   }
   newlyAdded = restored = '';
+  queueMicrotask(maybeOfferUpdate);
 }
 async function mutate(change, newImages = new Map(), replaceImages = false) {
   if (!editing || busy) { if (busy) toast('Подождите, изменения сохраняются'); return false; }
@@ -137,6 +139,24 @@ function returnItem(instanceId) {
 }
 function speak(text) { try { speech.say(text); } catch (error) { toast(error.message); } }
 
+let confirmationQueue = Promise.resolve();
+function confirmAction(message) {
+  const next = confirmationQueue.then(() => new Promise(resolve => {
+    const dialog = $('#confirm-dialog'), previous = document.activeElement;
+    dialog.innerHTML = `<div class="dialog-head"><h2 id="confirm-title">Подтверждение</h2><button type="button" class="icon-btn" data-confirm="no" aria-label="Закрыть">${icon('close')}</button></div><p class="lead">${esc(message)}</p><div class="dialog-actions"><button type="button" class="button ghost" data-confirm="no" autofocus>Отмена</button><button type="button" class="button" data-confirm="yes">Подтвердить</button></div>`;
+    const finish = answer => {
+      dialog.close(); dialog.innerHTML = ''; dialog.onclick = dialog.oncancel = null;
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+      resolve(answer);
+    };
+    dialog.onclick = e => { const button = e.target.closest('[data-confirm]'); if (button) finish(button.dataset.confirm === 'yes'); };
+    dialog.oncancel = e => { e.preventDefault(); finish(false); };
+    dialog.showModal();
+  }));
+  confirmationQueue = next.then(() => {});
+  return next;
+}
+
 function openDialog(title, content, { cleanup = null, close = true } = {}) {
   if ($('#dialog').open) closeDialog(false);
   returnFocus = document.activeElement;
@@ -148,10 +168,11 @@ function closeDialog(focus = true) {
   modalCleanup?.(); modalCleanup = null;
   $('#dialog').close(); $('#dialog').innerHTML = '';
   if (focus && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+  queueMicrotask(maybeOfferUpdate);
 }
-function requestCloseDialog() {
+async function requestCloseDialog() {
   if (busy) return;
-  if ($('#dialog').dataset.dirty && !confirm('Закрыть форму без сохранения изменений?')) return;
+  if ($('#dialog').dataset.dirty && !await confirmAction('Закрыть форму без сохранения изменений?')) return;
   closeDialog();
 }
 $('#dialog').addEventListener('cancel', e => { e.preventDefault(); requestCloseDialog(); });
@@ -184,11 +205,12 @@ function openGate() {
     }
     gateFailures = 0; gateValue = null; closeDialog(); editing = true; buffer = []; lastActivity = Date.now(); speech.stop(); feedback.play('mode'); render();
     $('[data-action="finish"]')?.focus();
+    pwa?.check().catch(() => {});
   };
 }
-function finishEditing(automatic = false) {
-  if (busy) return;
-  if ($('#dialog').open && $('#dialog').dataset.dirty && !confirm('Завершить редактирование без сохранения открытой формы?')) { lastActivity = Date.now(); return; }
+async function finishEditing(automatic = false) {
+  if (busy || $('#confirm-dialog').open) return;
+  if ($('#dialog').open && $('#dialog').dataset.dirty && !await confirmAction('Завершить редактирование без сохранения открытой формы?')) { lastActivity = Date.now(); return; }
   const count = buffer.length; drag?.cancel(); buffer = []; editing = false; resetHold(); closeDialog(false); render();
   feedback.play('mode'); $('#edit-gate')?.focus({ preventScroll: true });
   toast(automatic ? 'Редактор закрыт после бездействия. Незавершённые переносы отменены.' : count ? 'Готово. Незавершённые переносы возвращены на место.' : 'Альбом сохранён. Можно общаться.');
@@ -313,7 +335,7 @@ async function openCardEditor(cardId, address) {
   if (cardId) {
     $('#delete-card').onclick = async () => {
       const selected = communication.some(i => i.cardId === cardId) || buffer.some(i => i.cardId === cardId);
-      if (!confirm(selected ? 'Карточка используется в сообщении или буфере. Удалить её из альбома и строки?' : `Удалить карточку «${original.title}»?`)) return;
+      if (!await confirmAction(selected ? 'Карточка используется в сообщении или буфере. Удалить её из альбома и строки?' : `Удалить карточку «${original.title}»?`)) return;
       const success = await mutate(a => { removeCard(a, cardId); return a; }); if (success) closeDialog();
     };
     $('#copy-card').onclick = async () => {
@@ -329,10 +351,33 @@ function createIconName(id) {
   return names[id] || id;
 }
 
+async function installApp() {
+  try {
+    if (!await pwa?.install()) toast('В меню браузера выберите «Установить приложение» или «На экран Домой». На iPad — через меню «Поделиться».');
+  } catch { toast('Не удалось открыть установку. Попробуйте через меню браузера.'); }
+}
+function refreshPWAControls() {
+  if (editing) renderTools();
+  if ($('#install')) $('#install').hidden = !!pwa?.installed;
+  if ($('#update-banner')) $('#update-banner').hidden = !pwa?.hasUpdate;
+  if ($('#update-app')) $('#update-app').hidden = !!pwa?.hasUpdate;
+  maybeOfferUpdate();
+}
+function maybeOfferUpdate() {
+  if (!editing || busy || drag?.drag || $('#dialog').open || $('#confirm-dialog').open || !pwa?.shouldNotify) return;
+  pwa.markNotified();
+  openDialog('Доступно обновление', `<p class="lead">Можно установить новую версию приложения. Карточки, фотографии и сохранённые настройки останутся. Текущее сообщение и незавершённые переносы будут очищены.</p><div class="dialog-actions"><button class="button ghost" data-action="close-dialog">Позже</button><button class="button" data-action="apply-update" data-confirmed="yes">Обновить сейчас</button></div>`);
+}
+async function applyUpdate(confirmed = false) {
+  if (!editing || busy || !pwa?.hasUpdate) return;
+  if (!confirmed && (buffer.length || communication.length || $('#dialog').dataset.dirty) && !await confirmAction('Обновить приложение? Несохранённая форма, текущее сообщение и незавершённые переносы будут очищены. Альбом уже сохранён.')) return;
+  if (pwa.apply()) { buffer = []; communication = []; toast('Обновляем приложение…'); }
+}
+
 function openSettings() {
   if (!editing) return;
   const s = album.settings;
-  openDialog('Настройки альбома', `<form id="settings-form"><label class="field">Название альбома<input name="name" maxlength="160" value="${esc(album.name)}" required></label>
+  openDialog('Настройки альбома', `<aside class="update-banner" id="update-banner" ${pwa?.hasUpdate ? '' : 'hidden'}><strong>Доступно обновление</strong><p>Новая версия готова к установке. Карточки и сохранённые настройки останутся.</p><button type="button" class="button" data-action="apply-update">Обновить приложение</button></aside><form id="settings-form"><label class="field">Название альбома<input name="name" maxlength="160" value="${esc(album.name)}" required></label>
     <h3 class="section-title">Отображение</h3><div class="settings-grid">${range('cardScale', 'Карточки альбома', s.cardScale, 70, 150, 10, '%')}${range('lineCardScale', 'Карточки в строке', s.lineCardScale, 70, 150, 10, '%')}</div>
     <div class="row"><button type="button" class="button ghost" data-preset="80">Компактно</button><button type="button" class="button ghost" data-preset="100">Обычно</button><button type="button" class="button ghost" data-preset="130">Крупно</button></div>
     <label class="field">Анимации<select name="motion"><option value="full">Полные</option><option value="reduced">Сокращённые</option><option value="none">Без анимаций</option></select><small>Системное снижение движения учитывается автоматически.</small></label>
@@ -346,7 +391,7 @@ function openSettings() {
     <div class="row"><button type="button" class="button secondary" id="export">${icon('download')}Экспорт</button><button type="button" class="button ghost" id="import">${icon('upload')}Импорт</button></div><input type="file" id="import-file" accept=".json,application/json" hidden>
     <p class="note" id="storage-info"></p><button type="button" class="button ghost" id="persist">Сохранять данные надёжнее</button>
     <h3 class="section-title">Приложение · ${VERSION}</h3><p class="lead">Цифровой коммуникативный альбом AAC. Стартовые пиктограммы — примеры: замените их понятными пользователю изображениями.</p>
-    <div class="row"><button type="button" class="button ghost" id="install">На главный экран</button><button type="button" class="button ghost" id="update-app">Проверить обновление</button></div>
+    <div class="row"><button type="button" class="button ghost" id="install" ${pwa?.installed ? 'hidden' : ''}>На главный экран</button><button type="button" class="button ghost" id="update-app" ${pwa?.hasUpdate ? 'hidden' : ''}>Проверить обновление</button></div>
     <p class="note">Камера доступна при разрешении браузера. Вместо камеры может открыться выбор файла. Фото не отправляются на сервер.</p>
     <details><summary class="note">Удаление локальных данных</summary><p class="note">Удаляет все свои фото и карточки, возвращает стартовый альбом. Резервную копию сохраните заранее.</p><button type="button" class="button danger" id="reset-album">Удалить мои данные</button></details>
     <p class="error" id="settings-error" aria-live="polite"></p><div class="dialog-actions"><button type="button" class="button ghost" data-action="close-dialog">Отмена</button><button class="button" type="submit">Сохранить настройки</button></div></form>`);
@@ -389,29 +434,22 @@ function openSettings() {
     try {
       const imported = await importAlbum(file);
       if (!form.isConnected || !editing) return;
-      if (!confirm('Заменить текущий альбом данными из резервной копии? Несохранённые настройки будут отменены.')) return;
+      if (!await confirmAction('Заменить текущий альбом данными из резервной копии? Несохранённые настройки будут отменены.')) return;
       const success = await mutate(() => imported.album, imported.images, true);
       if (success) { communication = []; buffer = []; activeTab = album.tabs[0].id; closeDialog(); render(); toast('Альбом восстановлен. Проверьте способ входа для взрослого в настройках.'); }
     } catch (error) { if ($('#settings-error')) $('#settings-error').textContent = `Не удалось импортировать. ${error.message}`; }
   };
   navigator.storage?.estimate?.().then(info => { if ($('#storage-info')) $('#storage-info').textContent = `Занято примерно ${Math.max(.1, (info.usage || 0) / 1024 / 1024).toFixed(1)} МБ.`; }).catch(() => {});
   $('#persist').onclick = async () => { const result = await navigator.storage?.persist?.().catch(() => false); toast(result ? 'Браузер разрешил постоянное хранение. Резервная копия всё равно полезна.' : 'Постоянное хранение не разрешено. Сохраняйте резервные копии.'); };
-  $('#install').onclick = async () => {
-    if (installPrompt) { await installPrompt.prompt(); installPrompt = null; }
-    else toast('В меню браузера выберите «Установить приложение» или «На экран Домой». На iPad — через меню «Поделиться».');
-  };
+  $('#install').onclick = installApp;
   $('#update-app').onclick = async () => {
-    if (!swRegistration) { toast('Установка пока недоступна. Откройте приложение через HTTPS.'); return; }
     try {
-      await swRegistration.update();
-      if (swRegistration.waiting) {
-        if (!confirm('Применить обновление? Сообщение и незавершённые переносы будут очищены; альбом уже сохранён.')) return;
-        buffer = []; communication = []; swRegistration.waiting.postMessage('ACTIVATE');
-      } else toast('Проверка выполнена. Если обновление загружается, повторите через несколько секунд.');
+      if (!await pwa?.check()) { toast('Проверка обновлений пока недоступна.'); return; }
+      if (!pwa.hasUpdate) toast(pwa.registration.installing ? 'Обновление загружается. Сообщим, когда оно будет готово.' : 'Установлена актуальная версия.');
     } catch { toast('Не удалось проверить обновление. Проверьте подключение.'); }
   };
   $('#reset-album').onclick = async () => {
-    if (!confirm('Удалить все свои карточки и фотографии на этом устройстве? Вернётся стартовый альбом.')) return;
+    if (!await confirmAction('Удалить все свои карточки и фотографии на этом устройстве? Вернётся стартовый альбом.')) return;
     const success = await mutate(() => createAlbum(), new Map(), true);
     if (success) { buffer = []; communication = []; activeTab = album.tabs[0].id; closeDialog(); render(); toast('Личные данные удалены. Открыт стартовый альбом.'); }
   };
@@ -437,7 +475,7 @@ document.addEventListener('click', async e => {
     if (action === 'speak') { if (speechActive) speech.stop(); else speak(phrase(album, communication)); return; }
     if (action === 'remove-line') { if (returnItem(el.dataset.instanceId)) feedback.play('return'); return; }
     if (action === 'clear-line') {
-      if (line().length && confirm(editing ? 'Вернуть все карточки из буфера на свои места?' : 'Очистить сообщение и вернуть карточки на место?')) {
+      if (line().length && await confirmAction(editing ? 'Вернуть все карточки из буфера на свои места?' : 'Очистить сообщение и вернуть карточки на место?')) {
         speech.stop(); if (editing) buffer = []; else communication = []; render(); feedback.play('return');
       } return;
     }
@@ -446,6 +484,8 @@ document.addEventListener('click', async e => {
     if (!editing) return;
     if (action === 'finish') { finishEditing(); return; }
     if (action === 'settings') { openSettings(); return; }
+    if (action === 'install') { await installApp(); return; }
+    if (action === 'apply-update') { applyUpdate(el.dataset.confirmed === 'yes'); return; }
     if (action === 'add-tab') { openTabEditor(true); return; }
     if (action === 'edit-tab') { openTabEditor(); return; }
     if (action === 'edit-card') { await openCardEditor(el.dataset.cardId); return; }
@@ -466,7 +506,7 @@ document.addEventListener('click', async e => {
       if (success) openTabEditor(); return;
     }
     if (action === 'delete-tab') {
-      if (!confirm('Удалить пустую категорию?')) return;
+      if (!await confirmAction('Удалить пустую категорию?')) return;
       const success = await mutate(a => { const t = a.tabs.find(t => t.id === activeTab); if (a.tabs.length <= 1 || t.columns.some(c => c.cardIds.length)) throw Error('Нельзя удалить непустую или последнюю категорию'); a.tabs = a.tabs.filter(t => t.id !== activeTab); return a; });
       if (success) closeDialog(); return;
     }
@@ -490,7 +530,7 @@ document.addEventListener('focusout', e => { if (e.target.id === 'edit-gate') re
 window.addEventListener('blur', resetHold);
 document.addEventListener('visibilitychange', () => { if (document.hidden) { resetHold(); speech?.stop(); } });
 window.addEventListener('pagehide', () => { drag?.cancel(); resetHold(); });
-window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
+document.addEventListener('pointerup', () => setTimeout(maybeOfferUpdate, 350));
 setInterval(() => { if (editing && !busy && album.settings.autoLock > 0 && Date.now() - lastActivity > album.settings.autoLock * 60000) finishEditing(true); }, 10000);
 
 async function init() {
@@ -504,16 +544,10 @@ async function init() {
       identify: el => { if (busy || $('#dialog').open || (el.classList.contains('selected') && el.dataset.from === 'album')) return null; return { cardId: el.dataset.cardId, from: el.dataset.from, instanceId: el.dataset.instanceId }; },
       resolve: resolveDrop, highlight, drop: acceptDrop, cue: name => feedback.play(name), motion: () => album.settings.motion
     });
+    pwa = new PWAController(refreshPWAControls);
+    enableWorkspacePan($('#workspace'), $('#board'));
     render();
-    if ('serviceWorker' in navigator && window.isSecureContext) {
-      try {
-        swRegistration = await navigator.serviceWorker.register('./sw.js');
-        let refreshing = false;
-        navigator.serviceWorker.addEventListener('controllerchange', () => { if (!refreshing && swRegistration.active && document.documentElement.dataset.updateRequested === 'yes') { refreshing = true; location.reload(); } });
-        // Activation is requested explicitly from adult settings, never during a drag.
-        $('#dialog').addEventListener('click', e => { if (e.target.closest('#update-app')) document.documentElement.dataset.updateRequested = 'yes'; });
-      } catch { /* Installation can be retried from adult settings. */ }
-    }
+    pwa.start().catch(() => { /* Adult settings retain the manual retry. */ });
   } catch (error) {
     $('#app').innerHTML = `<div class="fatal"><h1>Не удалось открыть альбом</h1><p>${esc(error.message)}</p><p>Проверьте разрешение браузера на хранение данных и перезагрузите страницу. Существующие данные не перезаписаны.</p><button class="button" onclick="location.reload()">Попробовать снова</button></div>`;
   }
