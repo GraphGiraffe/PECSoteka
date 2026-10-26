@@ -10,6 +10,8 @@ input:not([type]),input[type=text],input[type=number],input[type=password],input
 [hidden] { display:none!important }
 .update-banner { padding:17px; border:1px solid #b5c697; border-radius:17px; background:#e3ebd2; margin:0 0 20px; font-size:14px }
 .update-banner p { font-size:12px; line-height:1.6; margin:9px 0 14px }
+.release-notes { padding:12px 0; border-bottom:1px solid var(--line) }
+.release-notes h3 { font-size:14px; margin:0 0 9px }.release-notes ul { padding-left:21px; margin:0; font-size:13px; line-height:1.65 }.release-notes li+li { margin-top:6px }
 .workspace { touch-action:pinch-zoom; user-select:none; cursor:grab }
 .workspace.panning,.workspace.panning * { cursor:grabbing }
 body { margin:0; min-width:320px; overflow:hidden; overscroll-behavior:none }

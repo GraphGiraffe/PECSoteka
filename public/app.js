@@ -137,7 +137,7 @@ function returnItem(instanceId) {
   if (editing) buffer = buffer.filter(i => i.instanceId !== instanceId); else { speech.stop(); communication = communication.filter(i => i.instanceId !== instanceId); }
   restored = item.cardId; render(); $('#live').textContent = 'Карточка возвращена на своё место'; return true;
 }
-function speak(text) { try { speech.say(text); } catch (error) { toast(error.message); } }
+async function speak(text) { try { await speech.say(text); } catch (error) { toast(error.message); } }
 
 let confirmationQueue = Promise.resolve();
 function confirmAction(message) {
@@ -361,12 +361,16 @@ function refreshPWAControls() {
   if ($('#install')) $('#install').hidden = !!pwa?.installed;
   if ($('#update-banner')) $('#update-banner').hidden = !pwa?.hasUpdate;
   if ($('#update-app')) $('#update-app').hidden = !!pwa?.hasUpdate;
+  document.querySelectorAll('[data-update-changes]').forEach(el => { el.innerHTML = updateChangesHTML(); });
   maybeOfferUpdate();
+}
+function updateChangesHTML() {
+  return (pwa?.releases || []).map(release => `<section class="release-notes" data-release-version="${esc(release.version)}"><h3>Версия ${esc(release.version)}</h3><ul>${release.changes.map(change => `<li>${esc(change)}</li>`).join('')}</ul></section>`).join('');
 }
 function maybeOfferUpdate() {
   if (!editing || busy || drag?.drag || $('#dialog').open || $('#confirm-dialog').open || !pwa?.shouldNotify) return;
   pwa.markNotified();
-  openDialog('Доступно обновление', `<p class="lead">Можно установить новую версию приложения. Карточки, фотографии и сохранённые настройки останутся. Текущее сообщение и незавершённые переносы будут очищены.</p><div class="dialog-actions"><button class="button ghost" data-action="close-dialog">Позже</button><button class="button" data-action="apply-update" data-confirmed="yes">Обновить сейчас</button></div>`);
+  openDialog('Доступно обновление', `<div data-update-changes>${updateChangesHTML()}</div><p class="lead">Карточки, фотографии и сохранённые настройки останутся. Текущее сообщение и незавершённые переносы будут очищены.</p><div class="dialog-actions"><button class="button ghost" data-action="close-dialog">Позже</button><button class="button" data-action="apply-update" data-confirmed="yes">Обновить сейчас</button></div>`);
 }
 async function applyUpdate(confirmed = false) {
   if (!editing || busy || !pwa?.hasUpdate) return;
@@ -377,13 +381,14 @@ async function applyUpdate(confirmed = false) {
 function openSettings() {
   if (!editing) return;
   const s = album.settings;
-  openDialog('Настройки альбома', `<aside class="update-banner" id="update-banner" ${pwa?.hasUpdate ? '' : 'hidden'}><strong>Доступно обновление</strong><p>Новая версия готова к установке. Карточки и сохранённые настройки останутся.</p><button type="button" class="button" data-action="apply-update">Обновить приложение</button></aside><form id="settings-form"><label class="field">Название альбома<input name="name" maxlength="160" value="${esc(album.name)}" required></label>
+  openDialog('Настройки альбома', `<aside class="update-banner" id="update-banner" ${pwa?.hasUpdate ? '' : 'hidden'}><strong>Доступно обновление</strong><div data-update-changes>${updateChangesHTML()}</div><p>Карточки и сохранённые настройки останутся.</p><button type="button" class="button" data-action="apply-update">Обновить приложение</button></aside><form id="settings-form"><label class="field">Название альбома<input name="name" maxlength="160" value="${esc(album.name)}" required></label>
     <h3 class="section-title">Отображение</h3><div class="settings-grid">${range('cardScale', 'Карточки альбома', s.cardScale, 70, 150, 10, '%')}${range('lineCardScale', 'Карточки в строке', s.lineCardScale, 70, 150, 10, '%')}</div>
     <div class="row"><button type="button" class="button ghost" data-preset="80">Компактно</button><button type="button" class="button ghost" data-preset="100">Обычно</button><button type="button" class="button ghost" data-preset="130">Крупно</button></div>
     <label class="field">Анимации<select name="motion"><option value="full">Полные</option><option value="reduced">Сокращённые</option><option value="none">Без анимаций</option></select><small>Системное снижение движения учитывается автоматически.</small></label>
     <h3 class="section-title">Общение</h3>${checkbox('tapToAdd', 'Нажатие добавляет карточку в строку', s.tapToAdd)}${checkbox('copyCards', 'Оставлять карточку в альбоме, разрешать повторы', s.copyCards)}${checkbox('reorderLine', 'Разрешать менять порядок карточек в сообщении', s.reorderLine)}${checkbox('showClear', 'Показывать кнопку очистки сообщения', s.showClear)}
     <h3 class="section-title">Речь и звуки</h3>${checkbox('speakOnAdd', 'Произносить карточку при добавлении', s.speakOnAdd)}${checkbox('actionSounds', 'Мягкие звуки действий', s.actionSounds)}
     <label class="field">Русский голос<select name="voiceURI" id="voice-select"></select><small id="voice-note"></small></label>
+    <details><summary class="note">Где установить голоса</summary><p class="note">Голоса устанавливаются в системных настройках. Android: Настройки → Специальные возможности → Синтез речи → параметры выбранного синтезатора → Установка голосовых данных → Русский. Названия пунктов могут отличаться.</p></details>
     <div class="settings-grid">${range('rate', 'Скорость речи', s.rate, .5, 2, .1)}${range('pitch', 'Высота голоса', s.pitch, .5, 2, .1)}${range('speechVolume', 'Громкость речи', s.speechVolume, 0, 1, .05)}${range('soundVolume', 'Громкость сигналов', s.soundVolume, 0, 1, .05)}</div>
     <button type="button" class="button ghost" id="voice-test">${icon('volume')}Послушать голос</button>
     <h3 class="section-title">Вход для взрослого</h3><label class="field">Проверка после удержания<select name="editGate"><option value="spokenNumber">Четырёхзначное число словами</option><option value="math">Математический пример</option></select></label><label class="field">Закрывать редактор после бездействия<select name="autoLock"><option value="0">Не закрывать</option><option value="2">2 минуты</option><option value="5">5 минут</option><option value="10">10 минут</option><option value="30">30 минут</option><option value="60">60 минут</option></select></label>
@@ -403,7 +408,7 @@ function openSettings() {
     form.elements.voiceURI.innerHTML = '<option value="">Русский голос по умолчанию</option>' + list.map(v => `<option value="${esc(v.voiceURI)}">${esc(v.name)}${v.localService ? ' · локальный' : ' · сетевой'}</option>`).join('');
     form.elements.voiceURI.value = previous;
     if (form.elements.voiceURI.selectedIndex < 0) form.elements.voiceURI.value = '';
-    $('#voice-note').textContent = list.length ? 'Сетевой голос используется только после вашего выбора.' : 'Русский голос пока не найден. Добавьте его в системных настройках или выберите другой доступный голос.';
+    $('#voice-note').textContent = list.length ? 'Сетевой голос используется только после вашего выбора.' : 'Список голосов пока пуст: он может ещё загружаться. Голоса можно проверить в системных настройках синтеза речи.';
   };
   voices(); window.speechSynthesis?.addEventListener('voiceschanged', voices);
   modalCleanup = () => { window.speechSynthesis?.removeEventListener('voiceschanged', voices); speech.stop(); speech.settings = album.settings; };
