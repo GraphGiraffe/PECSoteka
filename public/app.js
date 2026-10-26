@@ -55,7 +55,7 @@ function cardHTML(card, attrs = '', selected = false) {
 }
 function renderTools() {
   $('#tools').innerHTML = editing
-    ? `<span class="pill">Редактор</span>${btn('settings', 'Настройки альбома', 'settings')}<button class="button" data-action="finish">${icon('check')}<span>Готово</span></button>`
+    ? `<span class="pill">Редактор · ${VERSION}</span>${btn('settings', 'Настройки альбома', 'settings')}<button class="button" data-action="finish">${icon('check')}<span>Готово</span></button>`
     : `<span class="mode-label">${icon('cards')}Мой альбом</span><button class="icon-btn hold-button" id="edit-gate" aria-label="Удерживайте 2,3 секунды для входа в редактор" title="Удерживайте 2,3 секунды для входа в редактор"><span>${icon('lock')}</span></button>`;
 }
 function renderBoard() {
@@ -342,12 +342,12 @@ function openSettings() {
     <div class="settings-grid">${range('rate', 'Скорость речи', s.rate, .5, 2, .1)}${range('pitch', 'Высота голоса', s.pitch, .5, 2, .1)}${range('speechVolume', 'Громкость речи', s.speechVolume, 0, 1, .05)}${range('soundVolume', 'Громкость сигналов', s.soundVolume, 0, 1, .05)}</div>
     <button type="button" class="button ghost" id="voice-test">${icon('volume')}Послушать голос</button>
     <h3 class="section-title">Вход для взрослого</h3><label class="field">Проверка после удержания<select name="editGate"><option value="spokenNumber">Четырёхзначное число словами</option><option value="math">Математический пример</option></select></label><label class="field">Закрывать редактор после бездействия<select name="autoLock"><option value="0">Не закрывать</option><option value="2">2 минуты</option><option value="5">5 минут</option><option value="10">10 минут</option><option value="30">30 минут</option><option value="60">60 минут</option></select></label>
-    <h3 class="section-title">Альбом на этом устройстве</h3><p class="lead">Фотографии и настройки сохраняются только в этом браузере. Делайте резервную копию: очистка данных браузера удалит альбом.</p>
+    <h3 class="section-title">Данные альбома</h3><p class="lead">Делайте резервную копию: очистка данных браузера удалит альбом.</p>
     <div class="row"><button type="button" class="button secondary" id="export">${icon('download')}Экспорт</button><button type="button" class="button ghost" id="import">${icon('upload')}Импорт</button></div><input type="file" id="import-file" accept=".json,application/json" hidden>
     <p class="note" id="storage-info"></p><button type="button" class="button ghost" id="persist">Сохранять данные надёжнее</button>
-    <h3 class="section-title">Приложение · ${VERSION}</h3><p class="lead">Цифровой коммуникативный альбом AAC. Стартовые пиктограммы — примеры: замените их понятными пользователю изображениями. Системная речь офлайн зависит от установленных голосов.</p>
+    <h3 class="section-title">Приложение · ${VERSION}</h3><p class="lead">Цифровой коммуникативный альбом AAC. Стартовые пиктограммы — примеры: замените их понятными пользователю изображениями.</p>
     <div class="row"><button type="button" class="button ghost" id="install">На главный экран</button><button type="button" class="button ghost" id="update-app">Проверить обновление</button></div>
-    <p class="note">Камера доступна при разрешении браузера; устройство может предложить выбор камеры или файла. Снимки обрабатываются локально, без отправки на сервер.</p>
+    <p class="note">Камера доступна при разрешении браузера. Вместо камеры может открыться выбор файла. Фото не отправляются на сервер.</p>
     <details><summary class="note">Удаление локальных данных</summary><p class="note">Удаляет все свои фото и карточки, возвращает стартовый альбом. Резервную копию сохраните заранее.</p><button type="button" class="button danger" id="reset-album">Удалить мои данные</button></details>
     <p class="error" id="settings-error" aria-live="polite"></p><div class="dialog-actions"><button type="button" class="button ghost" data-action="close-dialog">Отмена</button><button class="button" type="submit">Сохранить настройки</button></div></form>`);
   const form = $('#settings-form');
@@ -355,10 +355,10 @@ function openSettings() {
   const voices = () => {
     if (!form.isConnected) return;
     const list = speech.voices(), previous = form.elements.voiceURI.value || s.voiceURI;
-    form.elements.voiceURI.innerHTML = '<option value="">Русский голос на устройстве</option>' + list.map(v => `<option value="${esc(v.voiceURI)}">${esc(v.name)}${v.localService ? ' · на устройстве' : ' · сетевой'}</option>`).join('');
+    form.elements.voiceURI.innerHTML = '<option value="">Русский голос по умолчанию</option>' + list.map(v => `<option value="${esc(v.voiceURI)}">${esc(v.name)}${v.localService ? ' · локальный' : ' · сетевой'}</option>`).join('');
     form.elements.voiceURI.value = previous;
     if (form.elements.voiceURI.selectedIndex < 0) form.elements.voiceURI.value = '';
-    $('#voice-note').textContent = list.length ? 'Для офлайн-речи выберите голос, установленный на устройстве.' : 'Русский голос пока не найден. Добавьте русский голос в настройках устройства. Альбом работает и без речи.';
+    $('#voice-note').textContent = list.length ? 'Сетевой голос используется только после вашего выбора.' : 'Русский голос пока не найден. Добавьте его в системных настройках или выберите другой доступный голос.';
   };
   voices(); window.speechSynthesis?.addEventListener('voiceschanged', voices);
   modalCleanup = () => { window.speechSynthesis?.removeEventListener('voiceschanged', voices); speech.stop(); speech.settings = album.settings; };
@@ -401,7 +401,7 @@ function openSettings() {
     else toast('В меню браузера выберите «Установить приложение» или «На экран Домой». На iPad — через меню «Поделиться».');
   };
   $('#update-app').onclick = async () => {
-    if (!swRegistration) { toast('Офлайн-установка пока недоступна. Откройте приложение через HTTPS.'); return; }
+    if (!swRegistration) { toast('Установка пока недоступна. Откройте приложение через HTTPS.'); return; }
     try {
       await swRegistration.update();
       if (swRegistration.waiting) {
@@ -510,11 +510,9 @@ async function init() {
         swRegistration = await navigator.serviceWorker.register('./sw.js');
         let refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => { if (!refreshing && swRegistration.active && document.documentElement.dataset.updateRequested === 'yes') { refreshing = true; location.reload(); } });
-        const ready = () => { $('#app-status').textContent = `Готово офлайн · ${VERSION}`; };
-        navigator.serviceWorker.ready.then(ready);
         // Activation is requested explicitly from adult settings, never during a drag.
         $('#dialog').addEventListener('click', e => { if (e.target.closest('#update-app')) document.documentElement.dataset.updateRequested = 'yes'; });
-      } catch { $('#app-status').textContent = `Офлайн-кеш недоступен · ${VERSION}`; }
+      } catch { /* Installation can be retried from adult settings. */ }
     }
   } catch (error) {
     $('#app').innerHTML = `<div class="fatal"><h1>Не удалось открыть альбом</h1><p>${esc(error.message)}</p><p>Проверьте разрешение браузера на хранение данных и перезагрузите страницу. Существующие данные не перезаписаны.</p><button class="button" onclick="location.reload()">Попробовать снова</button></div>`;

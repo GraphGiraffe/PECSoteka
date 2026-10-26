@@ -49,18 +49,37 @@ arts = {
 for name, content in arts.items():
     (root / 'cards' / f'{name}.svg').write_text(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 112"><g stroke="#38564a" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round">{content}</g></svg>')
 
-brand = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect x="90" y="98" width="332" height="282" rx="64" fill="#356951"/><path d="m158 356-11 70 79-55" fill="#356951"/><rect x="154" y="140" width="204" height="204" rx="26" fill="#fffef8"/><circle cx="301" cy="190" r="20" fill="#eb795c"/><path d="m178 310 49-65 39 47 26-30 42 48z" fill="#93ae76"/><path d="m178 310 49-65 39 47 26-30 42 48" fill="none" stroke="#356951" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-(root / 'brand.svg').write_text(brand)
+parts = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">']
 master = Image.new('RGB', (1024, 1024), '#f3f0e7')
 draw = ImageDraw.Draw(master)
-def box(coords): return tuple(v * 2 for v in coords)
-draw.rounded_rectangle(box((90, 98, 422, 380)), radius=128, fill='#356951')
-draw.polygon([(316,712),(294,852),(452,742)], fill='#356951')
-draw.rounded_rectangle(box((154,140,358,344)), radius=52, fill='#fffef8')
-draw.ellipse(box((281,170,321,210)), fill='#eb795c')
-mountain=[(178,310),(227,245),(266,292),(292,262),(334,310)]
-draw.polygon([(x*2,y*2) for x,y in mountain],fill='#93ae76')
-draw.line([(x*2,y*2) for x,y in mountain],fill='#356951',width=16,joint='curve')
+def rect(x,y,w,h,r,color,stroke=None,sw=0):
+    parts.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}" fill="{color}"' + (f' stroke="{stroke}" stroke-width="{sw}"' if stroke else '') + '/>')
+    draw.rounded_rectangle((x*2,y*2,(x+w)*2,(y+h)*2),radius=r*2,fill=color,outline=stroke,width=sw*2 if stroke else 1)
+def ellipse(x,y,r,color):
+    parts.append(f'<circle cx="{x}" cy="{y}" r="{r}" fill="{color}"/>')
+    draw.ellipse(((x-r)*2,(y-r)*2,(x+r)*2,(y+r)*2),fill=color)
+def picture(x,y,size,color):
+    rect(x,y,size,size,10,'#fffef8','#8ba280',3)
+    ellipse(x+size*.72,y+size*.27,size*.10,color)
+    pts=[(x+size*.15,y+size*.78),(x+size*.4,y+size*.42),(x+size*.61,y+size*.68),(x+size*.76,y+size*.52),(x+size*.88,y+size*.78)]
+    parts.append('<polygon points="'+' '.join(f'{a},{b}' for a,b in pts)+'" fill="#93ae76"/>')
+    draw.polygon([(int(a*2),int(b*2)) for a,b in pts],fill='#93ae76')
+
+rect(108,72,295,366,32,'#356951')
+for y,color in [(126,'#eb795c'),(196,'#e5ba60'),(266,'#a6bcd1')]: rect(386,y,40,52,10,color)
+rect(126,92,264,326,19,'#fffef8')
+rect(193,122,10,194,5,'#d9e1cc'); rect(295,122,10,194,5,'#d9e1cc')
+for y in [143,231,319]:
+    parts.append(f'<path d="M140 {y}h-32a15 15 0 0 0 0 30h32" fill="none" stroke="#263c36" stroke-width="9" stroke-linecap="round"/>')
+    draw.arc((93*2,y*2,123*2,(y+30)*2),90,270,fill='#263c36',width=18)
+    draw.line((108*2,y*2,140*2,y*2),fill='#263c36',width=18)
+    draw.line((108*2,(y+30)*2,140*2,(y+30)*2),fill='#263c36',width=18)
+picture(163,132,70,'#eb795c'); picture(265,132,70,'#e5ba60')
+picture(163,231,70,'#e5ba60'); picture(265,231,70,'#a6bcd1')
+rect(153,345,218,54,11,'#d9e7ad')
+picture(164,352,39,'#eb795c'); picture(217,352,39,'#e5ba60')
+parts.append('</svg>')
+(root / 'brand.svg').write_text(''.join(parts))
 for size, name in [(192, 'icon-192.png'), (512, 'icon-512.png'), (512, 'icon-maskable.png')]:
     master.resize((size,size),Image.Resampling.LANCZOS).save(root / name)
 print(f'Generated {len(arts)} original SVG pictograms, distinct brand and 3 PWA icons')

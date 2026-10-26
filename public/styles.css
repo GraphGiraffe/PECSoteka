@@ -14,7 +14,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visi
 button { border:0 }
 svg { width:22px; height:22px; flex-shrink:0; vertical-align:middle }
 button svg { pointer-events:none }
-.app { height:100dvh; height:100svh; display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) auto auto auto; padding:max(0px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(0px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left)); max-width:1800px; margin:auto }
+.app { height:100dvh; height:100svh; display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) auto auto; padding:max(0px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left)); max-width:1800px; margin:auto }
 .topbar { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:16px 12px 14px; border-bottom:1px solid var(--line) }
 .brand { display:flex; align-items:center; gap:13px; font-size:27px; font-weight:850; letter-spacing:-1.2px; white-space:nowrap }
 .brand-light { font-weight:500 }
@@ -67,7 +67,6 @@ h1 { font-size:25px; letter-spacing:-.8px; line-height:1.2; margin:0 }.heading-c
 .remove-item { position:absolute; right:-3px; top:-2px; width:30px; height:30px; background:var(--ink); color:var(--white); border-radius:50%; display:grid; place-items:center; box-shadow:0 0 0 3px #e6ecda; z-index:1 }.remove-item svg { width:16px; height:16px }
 .line-actions { display:flex; gap:8px; align-items:center; flex-shrink:0 }.speak-button { height:calc(106px*var(--line-scale)); min-height:78px; min-width:120px; flex-direction:column; border-radius:18px; font-size:13px }.speak-button svg { width:29px; height:29px }.clear-button { background:#d7e1c9; border:0 }.clear-button svg { width:19px; height:19px }
 .editing .message-panel { background:#f0e4d0; border-color:#d5b98b }.editing .line-count { background:#e3cda9 }.editing .line-note,.editing .line-empty { color:#776449 }.editing .remove-item { box-shadow:0 0 0 3px #f0e4d0 }
-.footnote { display:flex; justify-content:space-between; align-items:center; padding:11px 15px 12px; gap:10px; font-size:10px; color:var(--muted) }.footnote span { display:flex; align-items:center; gap:6px }.status-dot { width:6px; height:6px; border-radius:50%; background:#6b8d5d }
 .drop-line { box-shadow:0 0 0 3px #668b51; background:#dce8c9 }.editing .drop-line { background:#e9d6b8; box-shadow:0 0 0 3px #ad8a53 }
 .drop-before::before { content:''; display:block; position:absolute; left:-3px; right:-3px; top:-8px; height:5px; border-radius:4px; background:var(--green); z-index:3 }
 .drop-end { background:#dce7cd!important; outline:3px solid #668b51 }
