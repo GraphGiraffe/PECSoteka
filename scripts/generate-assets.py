@@ -49,13 +49,18 @@ arts = {
 for name, content in arts.items():
     (root / 'cards' / f'{name}.svg').write_text(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 112"><g stroke="#38564a" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round">{content}</g></svg>')
 
+brand = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect x="90" y="98" width="332" height="282" rx="64" fill="#356951"/><path d="m158 356-11 70 79-55" fill="#356951"/><rect x="154" y="140" width="204" height="204" rx="26" fill="#fffef8"/><circle cx="301" cy="190" r="20" fill="#eb795c"/><path d="m178 310 49-65 39 47 26-30 42 48z" fill="#93ae76"/><path d="m178 310 49-65 39 47 26-30 42 48" fill="none" stroke="#356951" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+(root / 'brand.svg').write_text(brand)
+master = Image.new('RGB', (1024, 1024), '#f3f0e7')
+draw = ImageDraw.Draw(master)
+def box(coords): return tuple(v * 2 for v in coords)
+draw.rounded_rectangle(box((90, 98, 422, 380)), radius=128, fill='#356951')
+draw.polygon([(316,712),(294,852),(452,742)], fill='#356951')
+draw.rounded_rectangle(box((154,140,358,344)), radius=52, fill='#fffef8')
+draw.ellipse(box((281,170,321,210)), fill='#eb795c')
+mountain=[(178,310),(227,245),(266,292),(292,262),(334,310)]
+draw.polygon([(x*2,y*2) for x,y in mountain],fill='#93ae76')
+draw.line([(x*2,y*2) for x,y in mountain],fill='#356951',width=16,joint='curve')
 for size, name in [(192, 'icon-192.png'), (512, 'icon-512.png'), (512, 'icon-maskable.png')]:
-    image = Image.new('RGB', (size, size), '#f3f0e7')
-    draw = ImageDraw.Draw(image)
-    cell, gap = int(size * .21), int(size * .045)
-    start = (size - 2 * cell - gap) // 2
-    for i, color in enumerate(['#356951', '#eb795c', '#e5ba60', '#a6bcd1']):
-        x, y = start + i % 2 * (cell + gap), start + i // 2 * (cell + gap)
-        draw.rounded_rectangle((x, y, x + cell, y + cell), radius=int(size * .045), fill=color)
-    image.save(root / name)
-print(f'Generated {len(arts)} original SVG pictograms and 3 PWA icons')
+    master.resize((size,size),Image.Resampling.LANCZOS).save(root / name)
+print(f'Generated {len(arts)} original SVG pictograms, distinct brand and 3 PWA icons')
