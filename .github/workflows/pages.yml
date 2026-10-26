@@ -1,0 +1,46 @@
+name: Publish Pages
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact reviewed main commit or release tag
+        required: true
+        default: main
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: pecsoteka-pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Domain checks
+        run: npm test
+      - name: Build static PWA
+        run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
