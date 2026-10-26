@@ -21,16 +21,50 @@ export class Feedback {
   }
 }
 export class Speech {
-  constructor(settings, status) { this.settings = settings; this.status = status; this.token = 0; }
+  constructor(settings, status) {
+    this.settings = settings; this.status = status; this.token = 0; this.cancelWait = null;
+    this.voices(); // Start asynchronous platform discovery before the first tap.
+  }
   voices() { return window.speechSynthesis?.getVoices().filter(v => v.lang.toLowerCase().startsWith('ru')) || []; }
-  stop() { this.token++; window.speechSynthesis?.cancel(); this.status(false); }
-  say(text) {
+  availableVoice(settings) {
+    const voices = this.voices();
+    return voices.find(v => v.voiceURI === settings.voiceURI) || voices.find(v => v.localService);
+  }
+  waitForVoice(token, settings) {
+    const synth = window.speechSynthesis;
+    return new Promise(resolve => {
+      let done = false; const timers = [];
+      const finish = () => {
+        if (done) return; done = true;
+        for (const timer of timers) clearTimeout(timer);
+        synth.removeEventListener('voiceschanged', check);
+        if (this.cancelWait === finish) this.cancelWait = null;
+        resolve();
+      };
+      const check = () => { if (this.token !== token || this.availableVoice(settings)) finish(); };
+      this.cancelWait = finish;
+      synth.addEventListener('voiceschanged', check);
+      // Some engines populate voices without emitting voiceschanged. Keep
+      // retries bounded; never spin or leave an old utterance waiting forever.
+      for (const ms of [100, 300, 700, 1500]) timers.push(setTimeout(check, ms));
+      timers.push(setTimeout(finish, 3000));
+      check();
+    });
+  }
+  stop() { this.token++; this.cancelWait?.(); window.speechSynthesis?.cancel(); this.status(false); }
+  async say(text) {
     this.stop();
     if (!text) return;
     if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) throw Error('На этом устройстве нет синтеза речи');
-    const token = this.token, u = new SpeechSynthesisUtterance(text), s = this.settings;
-    const voice = this.voices().find(v => v.voiceURI === s.voiceURI) || this.voices().find(v => v.localService);
-    if (!voice) throw Error('Локальный русский голос не найден. Установите его на устройстве или явно выберите сетевой голос в настройках альбома.');
+    const token = this.token, s = { ...this.settings };
+    let voice = this.availableVoice(s);
+    if (!voice) {
+      await this.waitForVoice(token, s);
+      if (this.token !== token) return;
+      voice = this.availableVoice(s);
+    }
+    if (!voice) throw Error('Русский голос пока недоступен. Проверьте системные настройки синтеза речи или выберите голос в настройках альбома.');
+    const u = new SpeechSynthesisUtterance(text);
     u.voice = voice; u.lang = s.voiceLang; u.rate = s.rate; u.pitch = s.pitch; u.volume = s.speechVolume;
     u.onstart = () => { if (this.token === token) this.status(true); };
     u.onend = u.onerror = () => { if (this.token === token) this.status(false); };

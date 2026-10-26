@@ -13,6 +13,6 @@ const list = await files('dist'), hash = createHash('sha256');
 for (const file of list) { hash.update(file); hash.update(await readFile(file)); }
 const revision = hash.digest('hex').slice(0, 12);
 const sw = await readFile('dist/sw.js', 'utf8');
-await writeFile('dist/sw.js', sw.replace("const CACHE = 'pecsoteka-0.1.2'", `const CACHE = 'pecsoteka-0.1.2-${revision}'`));
+await writeFile('dist/sw.js', sw.replace("const CACHE = 'pecsoteka-0.1.3'", `const CACHE = 'pecsoteka-0.1.3-${revision}'`));
 await writeFile('dist/.nojekyll', '');
-console.log(`PECSотека 0.1.2 built: ${list.length} files, cache ${revision}`);
+console.log(`PECSотека 0.1.3 built: ${list.length} files, cache ${revision}`);

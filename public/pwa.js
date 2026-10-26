@@ -1,11 +1,28 @@
 // Installation and waiting-worker state stay separate from the user's album.
+import { VERSION } from './domain.js';
+
+const versionParts = v => typeof v === 'string' && /^\d+\.\d+\.\d+$/.test(v) ? v.split('.').map(Number) : null;
+const compare = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+export function releasesBetween(history, current, target) {
+  const from = versionParts(current), to = versionParts(target);
+  if (!from || !to || !Array.isArray(history)) return [];
+  const unique = new Map();
+  for (const release of history) {
+    const parts = versionParts(release?.version);
+    if (!parts || compare(parts, from) <= 0 || compare(parts, to) > 0 || !Array.isArray(release.changes)) continue;
+    const changes = release.changes.filter(s => typeof s === 'string' && s.trim()).map(s => s.trim());
+    if (changes.length) unique.set(release.version, { version: release.version, changes });
+  }
+  return [...unique.values()].sort((a, b) => compare(versionParts(a.version), versionParts(b.version)));
+}
+
 export class PWAController {
   constructor(onChange = () => {}) {
     this.onChange = onChange;
     this.displayMode = matchMedia('(display-mode: standalone)');
     this.installed = this.standalone() || this.read('installed') === 'yes';
     this.prompt = null; this.registration = null; this.waiting = null;
-    this.updateId = ''; this.notifiedId = this.read('notified-update'); this.applying = false;
+    this.updateId = ''; this.releases = []; this.notifiedId = this.read('notified-update'); this.applying = false;
     if (this.standalone()) this.write('installed', 'yes');
     window.addEventListener('beforeinstallprompt', e => {
       e.preventDefault();
@@ -48,17 +65,19 @@ export class PWAController {
   }
   async refreshWaiting() {
     const worker = this.registration?.waiting;
-    if (!worker) { this.waiting = null; this.updateId = ''; this.onChange(); return; }
-    const id = await new Promise(resolve => {
+    if (!worker) { this.waiting = null; this.updateId = ''; this.releases = []; this.onChange(); return; }
+    const info = await new Promise(resolve => {
       const channel = new MessageChannel();
       const finish = value => { clearTimeout(timer); channel.port1.close(); resolve(value); };
-      const timer = setTimeout(() => finish(worker.scriptURL), 1200);
-      channel.port1.onmessage = e => finish(typeof e.data?.version === 'string' ? e.data.version : worker.scriptURL);
+      const timer = setTimeout(() => finish({ version: worker.scriptURL }), 1200);
+      channel.port1.onmessage = e => finish(e.data && typeof e.data === 'object' ? e.data : { version: worker.scriptURL });
       try { worker.postMessage({ type: 'GET_VERSION' }, [channel.port2]); }
-      catch { finish(worker.scriptURL); }
+      catch { finish({ version: worker.scriptURL }); }
     });
     if (this.registration.waiting !== worker) return;
-    this.waiting = worker; this.updateId = id; this.onChange();
+    this.waiting = worker; this.updateId = typeof info.version === 'string' ? info.version : worker.scriptURL;
+    this.releases = releasesBetween(info.releases, VERSION, info.appVersion);
+    this.onChange();
   }
   async check() {
     if (!this.registration) return false;
