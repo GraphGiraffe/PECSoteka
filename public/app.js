@@ -512,10 +512,20 @@ document.addEventListener('click', async e => {
     }
   } catch (error) { toast(error.message); }
 });
+function isTextField(target) {
+  const element = target instanceof Element ? target : target?.parentElement;
+  const field = element?.closest('input,textarea');
+  return !!field && (field.tagName === 'TEXTAREA' || ['text','number','password','search','email','url','tel'].includes(field.type));
+}
+document.addEventListener('selectstart', e => { if (!isTextField(e.target)) e.preventDefault(); });
+document.addEventListener('contextmenu', e => { if (!isTextField(e.target)) e.preventDefault(); });
 document.addEventListener('pointerdown', e => {
   lastActivity = Date.now();
   if (!e.isPrimary) { resetHold(); return; }
-  if (e.target.closest('#edit-gate')) startHold({ type: e.type, isPrimary: e.isPrimary, button: e.button, pointerId: e.pointerId, currentTarget: e.target.closest('#edit-gate') });
+  if (e.target.closest('#edit-gate')) {
+    e.preventDefault(); window.getSelection()?.removeAllRanges();
+    startHold({ type: e.type, isPrimary: e.isPrimary, button: e.button, pointerId: e.pointerId, currentTarget: e.target.closest('#edit-gate') });
+  }
   else if (holdStart) resetHold();
 });
 document.addEventListener('pointerup', resetHold);
