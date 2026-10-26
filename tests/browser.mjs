@@ -6,6 +6,7 @@ import { chromium } from 'playwright-core';
 import { numberToWords } from '../public/domain.js';
 
 const root = resolve(process.env.SITE_DIR || 'dist');
+let swOverride = null;
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 const server = createServer(async (req, res) => {
   try {
@@ -13,7 +14,7 @@ const server = createServer(async (req, res) => {
     if (!pathname.startsWith('/PECSoteka/')) { res.writeHead(404).end(); return; }
     const file = resolve(root, pathname.slice('/PECSoteka/'.length) || 'index.html');
     if (!file.startsWith(root + '/')) { res.writeHead(403).end(); return; }
-    const data = await readFile(file); res.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' }).end(data);
+    const data = swOverride && pathname.endsWith('/sw.js') ? swOverride : await readFile(file); res.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' }).end(data);
   } catch { res.writeHead(404).end(); }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -42,7 +43,7 @@ try {
   });
   const page = await context.newPage();
   page.on('pageerror', e => errors.push(e.message));
-  page.on('dialog', d => d.accept());
+  page.on('dialog', d => { errors.push(`Unexpected native dialog: ${d.type()}`); d.dismiss(); });
   await page.goto(url); await page.locator('#board .card').first().waitFor();
   if (process.env.TEST_SCOPE === 'layout') {
     for (const [width, height] of [[1440, 900], [1180, 820], [1024, 768], [768, 1024], [390, 844], [320, 640]]) {
@@ -151,8 +152,8 @@ try {
   await check('A17 single-file backup restores photo, columns and settings', async () => {
     await page.getByRole('button', { name: 'Настройки альбома', exact: true }).click();
     const download = page.waitForEvent('download'); await page.locator('#export').click(); const d = await download; const file = 'artifacts/backup.json'; await d.saveAs(file);
-    const before = await dbRead(); await page.getByText('Удаление локальных данных', { exact: true }).click(); await page.locator('#reset-album').click(); await page.locator('#settings-form').waitFor({ state: 'detached' });
-    await page.getByRole('button', { name: 'Настройки альбома', exact: true }).click(); await page.locator('#import-file').setInputFiles(file); await page.locator('#settings-form').waitFor({ state: 'detached' });
+    const before = await dbRead(); await page.getByText('Удаление локальных данных', { exact: true }).click(); await page.locator('#reset-album').click(); await page.locator('#confirm-dialog [data-confirm=yes]').click(); await page.locator('#settings-form').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Настройки альбома', exact: true }).click(); await page.locator('#import-file').setInputFiles(file); await page.locator('#confirm-dialog [data-confirm=yes]').click(); await page.locator('#settings-form').waitFor({ state: 'detached' });
     const after = await dbRead(); delete before.revision; delete after.revision; assert.deepEqual(after, before);
   });
   await check('IDB rejects stale writes without partial album or image mutation', async () => {
@@ -177,7 +178,80 @@ try {
     await page.screenshot({ path: 'artifacts/mobile.png', fullPage: true });
     assert.ok(dimensions.scroll <= dimensions.width, JSON.stringify(dimensions)); assert.ok(dimensions.panel < 844); assert.ok(dimensions.tabs <= dimensions.panelTop);
   });
-  assert.deepEqual(errors, [], 'No unhandled browser errors');
+  await check('Install is next to settings; installation hides both controls and persists', async () => {
+    await assertCount('.top-tools [data-action=install]', 0);
+    await gate();
+    await page.evaluate(() => {
+      window.__installPrompts = 0;
+      const event = new Event('beforeinstallprompt', { cancelable: true });
+      event.prompt = async () => { window.__installPrompts++; };
+      dispatchEvent(event);
+    });
+    assert.ok(await page.locator('[data-action=settings]').evaluate(el => el.nextElementSibling.dataset.action === 'install'));
+    await page.setViewportSize({ width: 320, height: 640 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.getByRole('button', { name: 'Установить приложение', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.__installPrompts), 1);
+    await assertCount('.top-tools [data-action=install]', 1);
+    await page.screenshot({ path: 'artifacts/editor-install-320.png', fullPage: true });
+    await page.evaluate(() => dispatchEvent(new Event('appinstalled')));
+    await assertCount('.top-tools [data-action=install]', 0);
+    await page.getByRole('button', { name: 'Настройки альбома', exact: true }).click(); assert.equal(await page.locator('#install').isVisible(), false);
+    await page.locator('#dialog [data-action=close-dialog]').first().click();
+    await page.reload(); await page.locator('#board .card').first().waitFor(); await gate();
+    await assertCount('.top-tools [data-action=install]', 0);
+    await page.getByRole('button', { name: 'Готово', exact: true }).click();
+  });
+  await check('Touch pan and wheel over fixed heading scroll only cards without changing album', async () => {
+    await page.setViewportSize({ width: 768, height: 700 });
+    await page.evaluate(() => document.documentElement.style.setProperty('--card-scale', '1.5'));
+    const original = await dbRead(), heading = await page.locator('#album-heading').boundingBox();
+    const x = heading.x + heading.width * .6, y = heading.y + heading.height / 2;
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x - 180, y: y - 90, id: 1 }] });
+    await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    const position = await page.locator('#board').evaluate(e => [e.scrollLeft,e.scrollTop]);
+    assert.ok(position[0] > 0 && position[1] > 0, JSON.stringify(position));
+    assert.deepEqual(await page.locator('#album-heading').boundingBox(), heading);
+    assert.deepEqual(await dbRead(), original);
+    await page.locator('#board').evaluate(e => { e.scrollLeft = e.scrollTop = 0; });
+    await page.mouse.move(x,y); await page.mouse.wheel(100,100);
+    await page.waitForFunction(() => document.querySelector('#board').scrollLeft > 0);
+    assert.deepEqual(await page.locator('#album-heading').boundingBox(), heading);
+    await page.screenshot({ path:'artifacts/fixed-heading-pan.png',fullPage:true });
+  });
+  await check('Real waiting worker: one adult update offer; deferred settings button; no child prompt', async () => {
+    await page.setViewportSize({ width: 1180, height: 820 });
+    const before = await dbRead();
+    swOverride = (await readFile(resolve(root, 'sw.js'), 'utf8')).replace(/const CACHE = '[^']+'/, "const CACHE = 'pecsoteka-update-acceptance'");
+    await page.evaluate(async () => { const r = await navigator.serviceWorker.getRegistration(); await r.update(); });
+    await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration()).waiting);
+    await assertCount('#dialog[open]', 0);
+    await gate(); await page.getByRole('heading', { name: 'Доступно обновление', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Позже', exact: true }).click();
+    await page.getByRole('button', { name: 'Готово', exact: true }).click();
+    await gate(); await assertCount('#dialog[open]', 0);
+    await page.getByRole('button', { name: 'Настройки альбома', exact: true }).click();
+    assert.equal(await page.locator('#update-banner').isVisible(), true);
+    await page.locator('#settings-form [name=name]').fill('Несохранённое имя');
+    await page.locator('#dialog [data-action=close-dialog]').first().click();
+    await page.locator('#confirm-dialog [data-confirm=no]').last().click();
+    assert.equal(await page.locator('#settings-form [name=name]').inputValue(), 'Несохранённое имя');
+    await page.locator('#dialog [data-action=close-dialog]').first().click(); await page.locator('#confirm-dialog [data-confirm=yes]').click();
+    await page.reload(); await page.locator('#board .card').first().waitFor(); await gate();
+    await assertCount('#dialog[open]', 0);
+    await page.getByRole('button', { name: 'Настройки альбома', exact: true }).click();
+    assert.equal(await page.locator('#update-banner').isVisible(), true);
+    await page.screenshot({ path: 'artifacts/update-settings.png', fullPage: true });
+    await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.getByRole('button', { name: 'Обновить приложение', exact: true }).click()]);
+    await page.locator('#board .card').first().waitFor(); await assertCount('.app.editing', 0);
+    assert.deepEqual(await dbRead(), before);
+    assert.equal(await page.evaluate(async () => {
+      const channel = new MessageChannel();
+      return await new Promise(resolve => { channel.port1.onmessage = e => resolve(e.data.version); navigator.serviceWorker.controller.postMessage({type:'GET_VERSION'},[channel.port2]); });
+    }), 'pecsoteka-update-acceptance');
+  });
+  assert.deepEqual(errors, [], 'No unhandled browser errors or native message dialogs');
   console.log(`Browser acceptance: ${results.length} scenarios passed; screenshots in artifacts/`);
 } finally {
   await browser?.close(); server.close();
