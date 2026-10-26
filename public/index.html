@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3f0e7">
+  <meta name="description" content="PECSотека — цифровой коммуникативный альбом. Собирайте сообщения из карточек. Фото и настройки хранятся на вашем устройстве.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" type="image/png" href="./assets/icon-192.png">
+  <link rel="apple-touch-icon" href="./assets/icon-192.png">
+  <link rel="stylesheet" href="./styles.css">
+  <title>PECSотека — мой альбом</title>
+</head>
+<body>
+  <div class="app" id="app" aria-busy="true">
+    <header class="topbar">
+      <div class="brand"><img class="brand-mark" src="./assets/brand.svg" alt=""><span>PECS<span class="brand-light">отека</span><small>цифровой альбом</small></span></div>
+      <div class="top-tools" id="tools"></div>
+    </header>
+    <main class="workspace" id="workspace">
+      <div class="album-heading" id="album-heading"></div>
+      <div class="board" id="board" aria-label="Карточки альбома"></div>
+    </main>
+    <nav class="tabs" id="tabs" aria-label="Категории альбома"></nav>
+    <section class="message-panel" id="message-panel" aria-label="Коммуникативная строка"></section>
+  </div>
+  <div id="live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+  <div id="toast" class="toast" role="status"></div>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <noscript>Для работы альбома включите JavaScript в браузере.</noscript>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
