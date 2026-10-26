@@ -7,6 +7,7 @@ import { numberToWords } from '../public/domain.js';
 
 const root = resolve(process.env.SITE_DIR || 'dist');
 let swOverride = null;
+let updatesOverride = null;
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 const server = createServer(async (req, res) => {
   try {
@@ -14,7 +15,7 @@ const server = createServer(async (req, res) => {
     if (!pathname.startsWith('/PECSoteka/')) { res.writeHead(404).end(); return; }
     const file = resolve(root, pathname.slice('/PECSoteka/'.length) || 'index.html');
     if (!file.startsWith(root + '/')) { res.writeHead(403).end(); return; }
-    const data = swOverride && pathname.endsWith('/sw.js') ? swOverride : await readFile(file); res.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' }).end(data);
+    const data = swOverride && pathname.endsWith('/sw.js') ? swOverride : updatesOverride && pathname.endsWith('/updates.json') ? updatesOverride : await readFile(file); res.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' }).end(data);
   } catch { res.writeHead(404).end(); }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -34,11 +35,12 @@ try {
     // Simulate the complete platform boundary. A native utterance rejects a
     // plain JS voice, so mixing a real utterance with fake voices is invalid.
     Object.defineProperty(window, 'SpeechSynthesisUtterance', { configurable: true, value: class { constructor(text) { this.text = text; } } });
-    Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: {
-      getVoices: () => [{ lang: 'ru-RU', voiceURI: 'test-ru', name: 'Test Russian', localService: true }],
+    window.__voices = [{ lang: 'ru-RU', voiceURI: 'test-ru', name: 'Test Russian', localService: true }];
+    const synth = Object.assign(new EventTarget(), {
+      getVoices: () => window.__voices,
       cancel: () => { window.__cancels++; }, speak: u => { window.__speechCalls.push(u.text); },
-      addEventListener() {}, removeEventListener() {}
-    } });
+    });
+    Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: synth });
     if (window.AudioContext) { const fn = AudioContext.prototype.createOscillator; AudioContext.prototype.createOscillator = function(...args) { window.__oscillators++; return fn.apply(this, args); }; }
   });
   const page = await context.newPage();
@@ -162,6 +164,18 @@ try {
   await check('A19 orientation changes keep current message', async () => {
     await page.setViewportSize({ width: 820, height: 1180 }); await assertCount('.line-entry', 2); await page.setViewportSize({ width: 1180, height: 820 });
   });
+  await check('First speech request waits for late voice discovery without another click or false toast', async () => {
+    const previous = await page.evaluate(() => {
+      const count=window.__speechCalls.length, voices=window.__voices;
+      window.__voices=[];
+      setTimeout(()=>{window.__voices=voices;window.speechSynthesis.dispatchEvent(new Event('voiceschanged'));},180);
+      return count;
+    });
+    await page.getByRole('button',{name:'Произнести',exact:true}).click();
+    await page.waitForFunction(n=>window.__speechCalls.length===n+1,previous);
+    assert.equal((await page.evaluate(()=>window.__speechCalls)).at(-1),'Помоги воды');
+    assert.ok(!/голос.*(не найден|недоступен)/i.test(await page.locator('#toast').textContent()));
+  });
   await check('Pointer cancellation returns card without committing a move', async () => {
     const rect = await card('Вода').boundingBox();
     await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: rect.x + 30, y: rect.y + 30, id: 1 }] });
@@ -243,16 +257,20 @@ try {
   await check('Real waiting worker: one adult update offer; deferred settings button; no child prompt', async () => {
     await page.setViewportSize({ width: 1180, height: 820 });
     const before = await dbRead();
-    swOverride = (await readFile(resolve(root, 'sw.js'), 'utf8')).replace(/const CACHE = '[^']+'/, "const CACHE = 'pecsoteka-update-acceptance'");
+    updatesOverride=JSON.stringify({releases:[{version:'0.1.5',changes:['Второе пропущенное обновление']},{version:'0.1.2',changes:['Уже установлено']},{version:'0.1.4',changes:['Первое пропущенное обновление']}]});
+    swOverride = (await readFile(resolve(root, 'sw.js'), 'utf8')).replace(/const CACHE = '[^']+'/, "const CACHE = 'pecsoteka-update-acceptance'").replace(/const APP_VERSION = '[^']+'/,"const APP_VERSION = '0.1.5'");
     await page.evaluate(async () => { const r = await navigator.serviceWorker.getRegistration(); await r.update(); });
     await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration()).waiting);
     await assertCount('#dialog[open]', 0);
     await gate(); await page.getByRole('heading', { name: 'Доступно обновление', exact: true }).waitFor();
+    assert.deepEqual(await page.locator('#dialog [data-release-version]').evaluateAll(els=>els.map(e=>e.dataset.releaseVersion)),['0.1.4','0.1.5']);
+    await page.screenshot({path:'artifacts/update-changes.png',fullPage:true});
     await page.getByRole('button', { name: 'Позже', exact: true }).click();
     await page.getByRole('button', { name: 'Готово', exact: true }).click();
     await gate(); await assertCount('#dialog[open]', 0);
     await page.getByRole('button', { name: 'Настройки альбома', exact: true }).click();
     assert.equal(await page.locator('#update-banner').isVisible(), true);
+    assert.deepEqual(await page.locator('#update-banner [data-release-version]').evaluateAll(els=>els.map(e=>e.dataset.releaseVersion)),['0.1.4','0.1.5']);
     await page.locator('#settings-form [name=name]').fill('Несохранённое имя');
     await page.locator('#dialog [data-action=close-dialog]').first().click();
     await page.locator('#confirm-dialog [data-confirm=no]').last().click();
