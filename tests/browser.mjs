@@ -84,6 +84,26 @@ try {
   };
   const initial = await dbRead();
   await page.screenshot({ path: 'artifacts/tablet-initial.png', fullPage: true });
+  await check('UI text rejects selection while text inputs retain editing and touch gate works', async () => {
+    for (const selector of ['.brand','.mode-label','.heading-copy','.tab','.card-title','#edit-gate']) {
+      assert.equal(await page.locator(selector).first().evaluate(el => getComputedStyle(el).userSelect), 'none', selector);
+    }
+    assert.equal(await page.locator('.brand').evaluate(el => el.dispatchEvent(new Event('selectstart', { bubbles:true,cancelable:true }))), false);
+    assert.equal(await page.locator('#edit-gate').evaluate(el => el.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true,cancelable:true }))), false);
+    const rect = await page.locator('#edit-gate').boundingBox(), point = { x:rect.x+rect.width/2,y:rect.y+rect.height/2,id:1 };
+    await touch.send('Input.dispatchTouchEvent', { type:'touchStart',touchPoints:[point] });
+    await page.waitForTimeout(2400);
+    await touch.send('Input.dispatchTouchEvent', { type:'touchEnd',touchPoints:[] });
+    await page.locator('#gate-form').waitFor();
+    const field=page.locator('#gate-form [name=answer]');
+    assert.equal(await field.evaluate(el => getComputedStyle(el).userSelect), 'text');
+    await field.fill('1234');
+    assert.equal(await field.evaluate(el => { el.select(); return el.selectionEnd-el.selectionStart; }), 4);
+    assert.equal(await field.evaluate(el => el.dispatchEvent(new Event('selectstart', { bubbles:true,cancelable:true }))), true);
+    assert.equal(await field.evaluate(el => el.dispatchEvent(new MouseEvent('contextmenu', { bubbles:true,cancelable:true }))), true);
+    assert.equal(await page.locator('#dialog-title').evaluate(el=>getComputedStyle(el).userSelect),'none');
+    await page.getByRole('button',{ name:'Закрыть',exact:true }).click();
+  });
   await check('A12 short press never opens editor', async () => { await page.locator('#edit-gate').click(); await assertCount('#gate-form', 0); await assertCount('.app.editing', 0); });
   await check('A01 A04 touch drag adds to line without changing album', async () => {
     await dragTo(card('Я хочу'), page.locator('#message-panel')); await waitForCount('.line-entry', 1);

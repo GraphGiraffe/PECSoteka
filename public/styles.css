@@ -5,7 +5,8 @@
   color:var(--ink); background:var(--paper); font-family:Inter,"Trebuchet MS",Arial,sans-serif;
   font-synthesis:none; color-scheme:light;
 }
-* { box-sizing:border-box }
+* { box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none }
+input:not([type]),input[type=text],input[type=number],input[type=password],input[type=search],input[type=email],input[type=url],input[type=tel],textarea { -webkit-user-select:text; user-select:text; -webkit-touch-callout:default }
 [hidden] { display:none!important }
 .update-banner { padding:17px; border:1px solid #b5c697; border-radius:17px; background:#e3ebd2; margin:0 0 20px; font-size:14px }
 .update-banner p { font-size:12px; line-height:1.6; margin:9px 0 14px }
@@ -33,7 +34,7 @@ button svg { pointer-events:none }
 .button { display:inline-flex; justify-content:center; align-items:center; gap:9px; min-height:46px; padding:11px 18px; border-radius:14px; background:var(--ink); color:var(--white); font-weight:700; font-size:14px }
 .button.secondary { background:#e3e8d8; color:var(--ink) }.button.ghost { background:transparent; border:1px solid var(--line); color:var(--ink) }
 .button.danger { background:#f0d8cf; color:#753a2a }
-.hold-button { position:relative; background:conic-gradient(var(--green) calc(var(--hold,0)*1turn),var(--line) 0); border:0; padding:3px; border-radius:50% }
+.hold-button { position:relative; background:conic-gradient(var(--green) calc(var(--hold,0)*1turn),var(--line) 0); border:0; padding:3px; border-radius:50%; touch-action:none }
 .hold-button span { display:grid; place-items:center; background:var(--paper); width:40px; height:40px; border-radius:50%; pointer-events:none }
 .workspace { min-height:0; min-width:0; display:flex; flex-direction:column; padding:18px 12px 14px; background:color-mix(in srgb,var(--category-color,#d9e7ad) 65%,var(--paper)); border-radius:22px; transition:background var(--duration) }
 .album-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; flex-shrink:0 }
