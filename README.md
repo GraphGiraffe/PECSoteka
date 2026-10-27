@@ -81,3 +81,8 @@ Copyright (C) 2026 GraphGiraffe.
 OSI. Программа предоставляется без гарантий. У сторонних компонентов, системных
 голосов и пользовательских материалов свои условия:
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+
+### PWA на общем домене
+
+У приложения отдельный стабильный manifest ID. Особенности обновления ранее установленной версии: [docs/PWA-IDENTITY.md](docs/PWA-IDENTITY.md).
