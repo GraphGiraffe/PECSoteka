@@ -1,4 +1,4 @@
-export const VERSION = '0.1.3';
+export const VERSION = '0.1.4';
 export const SCHEMA = 1;
 export const uid = () => crypto.randomUUID();
 export const defaults = Object.freeze({

@@ -1,5 +1,5 @@
-const CACHE = 'pecsoteka-0.1.3';
-const APP_VERSION = '0.1.3';
+const CACHE = 'pecsoteka-0.1.4';
+const APP_VERSION = '0.1.4';
 const CORE = ['./', './index.html', './styles.css', './app.js', './domain.js', './storage.js', './services.js', './drag.js', './pwa.js', './updates.json', './manifest.webmanifest', './assets/brand.svg', './assets/icon-192.png', './assets/icon-512.png', './assets/icon-maskable.png'];
 const ICONS = ['want','help','more','stop','yes','no','pause','toilet','water','apple','banana','bread','soup','milk','cookie','juice','play','book','walk','sleep','draw','music','wash','eat','mom','dad','me','home','park','school','happy','sad','hurt','hot','cold','tired'];
 const FILES = [...CORE, ...ICONS.map(id => `./assets/cards/${id}.svg`)];
