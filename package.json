@@ -2,7 +2,7 @@
   "name": "pecsoteka",
   "version": "0.1.3",
   "private": true,
-  "license": "GPL-3.0-only",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "description": "Локальный цифровой коммуникативный альбом AAC",
   "scripts": {
