@@ -5,6 +5,9 @@ import { join } from 'node:path';
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist', { recursive: true });
 await cp('public', 'dist', { recursive: true });
+for (const path of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses']) {
+  await cp(path, join('dist', path), { recursive: true });
+}
 async function files(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
   return (await Promise.all(entries.map(e => e.isDirectory() ? files(join(dir, e.name)) : [join(dir, e.name)]))).flat().sort();
