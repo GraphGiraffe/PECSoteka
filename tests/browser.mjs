@@ -75,6 +75,13 @@ try {
     await page.locator('.app.editing').waitFor();
   };
   const touch = await context.newCDPSession(page);
+  await check('Chromium computes a distinct PWA identity and keeps the album navigation scope', async () => {
+    const { manifest, errors: manifestErrors } = await touch.send('Page.getAppManifest');
+    assert.equal(manifestErrors.filter(error => error.critical).length, 0);
+    assert.equal(manifest.id, new URL('/pecsoteka', url).href);
+    assert.equal(manifest.startUrl, url);
+    assert.equal(manifest.scope, url);
+  });
   const dragTo = async (source, target, offset = .5) => {
     const from = await source.boundingBox(), to = typeof target === 'object' && typeof target.x === 'number' ? target : await target.boundingBox();
     assert.ok(from && to, 'drag endpoints exist');
@@ -257,20 +264,20 @@ try {
   await check('Real waiting worker: one adult update offer; deferred settings button; no child prompt', async () => {
     await page.setViewportSize({ width: 1180, height: 820 });
     const before = await dbRead();
-    updatesOverride=JSON.stringify({releases:[{version:'0.1.5',changes:['Второе пропущенное обновление']},{version:'0.1.2',changes:['Уже установлено']},{version:'0.1.4',changes:['Первое пропущенное обновление']}]});
-    swOverride = (await readFile(resolve(root, 'sw.js'), 'utf8')).replace(/const CACHE = '[^']+'/, "const CACHE = 'pecsoteka-update-acceptance'").replace(/const APP_VERSION = '[^']+'/,"const APP_VERSION = '0.1.5'");
+    updatesOverride=JSON.stringify({releases:[{version:'0.1.6',changes:['Второе пропущенное обновление']},{version:'0.1.2',changes:['Уже установлено']},{version:'0.1.5',changes:['Первое пропущенное обновление']}]});
+    swOverride = (await readFile(resolve(root, 'sw.js'), 'utf8')).replace(/const CACHE = '[^']+'/, "const CACHE = 'pecsoteka-update-acceptance'").replace(/const APP_VERSION = '[^']+'/,"const APP_VERSION = '0.1.6'");
     await page.evaluate(async () => { const r = await navigator.serviceWorker.getRegistration(); await r.update(); });
     await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration()).waiting);
     await assertCount('#dialog[open]', 0);
     await gate(); await page.getByRole('heading', { name: 'Доступно обновление', exact: true }).waitFor();
-    assert.deepEqual(await page.locator('#dialog [data-release-version]').evaluateAll(els=>els.map(e=>e.dataset.releaseVersion)),['0.1.4','0.1.5']);
+    assert.deepEqual(await page.locator('#dialog [data-release-version]').evaluateAll(els=>els.map(e=>e.dataset.releaseVersion)),['0.1.5','0.1.6']);
     await page.screenshot({path:'artifacts/update-changes.png',fullPage:true});
     await page.getByRole('button', { name: 'Позже', exact: true }).click();
     await page.getByRole('button', { name: 'Готово', exact: true }).click();
     await gate(); await assertCount('#dialog[open]', 0);
     await page.getByRole('button', { name: 'Настройки альбома', exact: true }).click();
     assert.equal(await page.locator('#update-banner').isVisible(), true);
-    assert.deepEqual(await page.locator('#update-banner [data-release-version]').evaluateAll(els=>els.map(e=>e.dataset.releaseVersion)),['0.1.4','0.1.5']);
+    assert.deepEqual(await page.locator('#update-banner [data-release-version]').evaluateAll(els=>els.map(e=>e.dataset.releaseVersion)),['0.1.5','0.1.6']);
     await page.locator('#settings-form [name=name]').fill('Несохранённое имя');
     await page.locator('#dialog [data-action=close-dialog]').first().click();
     await page.locator('#confirm-dialog [data-confirm=no]').last().click();
