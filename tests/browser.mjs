@@ -13,6 +13,8 @@ const server = createServer(async (req, res) => {
   try {
     const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
     if (!pathname.startsWith('/PECSoteka/')) { res.writeHead(404).end(); return; }
+    // Match directory-based static hosting (including Tailscale FileServer).
+    if (pathname === '/PECSoteka/index.html') { res.writeHead(301, { Location: './' }).end(); return; }
     const file = resolve(root, pathname.slice('/PECSoteka/'.length) || 'index.html');
     if (!file.startsWith(root + '/')) { res.writeHead(403).end(); return; }
     const data = swOverride && pathname.endsWith('/sw.js') ? swOverride : updatesOverride && pathname.endsWith('/updates.json') ? updatesOverride : await readFile(file); res.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' }).end(data);
@@ -28,7 +30,7 @@ const results = [], errors = [];
 const check = async (name, fn) => { await fn(); results.push(name); console.log(`PASS ${name}`); };
 const words = new Map(Array.from({ length: 9000 }, (_, i) => [numberToWords(i + 1000), i + 1000]));
 try {
-  browser = await chromium.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+  browser = await chromium.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
   const context = await browser.newContext({ viewport: { width: 1180, height: 820 }, hasTouch: true, acceptDownloads: true });
   await context.addInitScript(() => {
     window.__speechCalls = []; window.__cancels = 0; window.__oscillators = 0;
@@ -197,6 +199,153 @@ try {
     await page.getByRole('button', { name: 'Настройки альбома', exact: true }).click(); await page.locator('#import-file').setInputFiles(file); await page.locator('#confirm-dialog [data-confirm=yes]').click(); await page.locator('#settings-form').waitFor({ state: 'detached' });
     const after = await dbRead(); delete before.revision; delete after.revision; assert.deepEqual(after, before);
   });
+  let recordedCard, recordedBytes;
+  const closeDirtyCard = async () => {
+    await page.locator('#dialog [data-action=close-dialog]').first().click();
+    if (await page.locator('#confirm-dialog').isVisible()) await page.locator('#confirm-dialog [data-confirm=yes]').click();
+    await page.locator('#card-form').waitFor({ state: 'detached' });
+  };
+  await check('Real microphone capture normalizes WAV, previews, and saves only on card submit', async () => {
+    const initial = await dbRead(); recordedCard = initial.cards[initial.tabs[0].columns[0].cardIds[0]];
+    await page.evaluate(() => {
+      const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      window.__realMicrophone = original;
+      navigator.mediaDevices.getUserMedia = async (...args) => { const stream = await original(...args); window.__recordingStream = stream; return stream; };
+    });
+    await page.locator(`[data-action=edit-card][data-card-id="${recordedCard.id}"]`).click();
+    await page.locator('#record-start').click(); await page.locator('#record-stop').waitFor({ state: 'visible' });
+    await page.waitForTimeout(750); await page.locator('#record-stop').click();
+    await page.waitForFunction(() => document.querySelector('#recording-status').textContent.includes('Запись готова') && !document.querySelector('#card-form [type=submit]').disabled);
+    assert.equal((await dbRead()).cards[recordedCard.id].audioId, undefined);
+    assert.equal(await page.evaluate(() => window.__recordingStream.getTracks().every(t => t.readyState === 'ended')), true);
+    await page.locator('#audio-preview').click(); await page.waitForFunction(() => document.querySelector('#audio-preview').textContent === 'Прослушать');
+    await page.locator('#card-form [type=submit]').click(); await page.locator('#card-form').waitFor({ state: 'detached' });
+    const value = await page.evaluate(async id => {
+      const { AlbumRepository } = await import('./storage.js'), r = await new AlbumRepository().open(), data = await r.load();
+      const blob = data.recordings.get(data.album.cards[id].audioId); const bytes = [...new Uint8Array(await blob.arrayBuffer())]; r.db.close();
+      return { type: blob.type, bytes };
+    }, recordedCard.id);
+    assert.equal(value.type, 'audio/wav'); assert.equal(Buffer.from(value.bytes.slice(0, 4)).toString(), 'RIFF');
+    recordedBytes = Buffer.from(value.bytes); assert.ok(recordedBytes.length > 1000);
+  });
+  await check('Denied microphone, invalid upload and canceled retake preserve the saved recording', async () => {
+    const before = await dbRead();
+    await page.locator(`[data-action=edit-card][data-card-id="${recordedCard.id}"]`).click();
+    await page.evaluate(() => { window.__workingMicrophone = navigator.mediaDevices.getUserMedia; navigator.mediaDevices.getUserMedia = async () => { throw new DOMException('Denied', 'NotAllowedError'); }; });
+    await page.locator('#record-start').click(); await page.waitForFunction(() => document.querySelector('#audio-error').textContent.includes('не разрешён'));
+    await page.evaluate(() => { navigator.mediaDevices.getUserMedia = window.__workingMicrophone; });
+    await page.locator('#audio-file').setInputFiles({name:'bad.wav',mimeType:'audio/wav',buffer:Buffer.from('not audio')});
+    await page.waitForFunction(() => document.querySelector('#audio-error').textContent.includes('Не удалось прочитать'));
+    await page.locator('#record-start').click(); await page.locator('#record-stop').waitFor({state:'visible'});
+    await page.locator('#record-cancel').click();
+    assert.equal(await page.evaluate(() => window.__recordingStream.getTracks().every(t => t.readyState === 'ended')),true);
+    await closeDirtyCard(); assert.deepEqual(await dbRead(),before);
+  });
+  await check('Retake comparison can keep the old take or commit only the selected new take', async () => {
+    const old = (await dbRead()).cards[recordedCard.id].audioId;
+    await page.locator(`[data-action=edit-card][data-card-id="${recordedCard.id}"]`).click();
+    await page.locator('#audio-file').setInputFiles({name:'voice.wav',mimeType:'audio/wav',buffer:recordedBytes});
+    await page.locator('#recording-choice').waitFor({state:'visible'});
+    await page.locator('#audio-old-preview').click(); await page.waitForFunction(() => document.querySelector('#audio-old-preview').textContent === 'Прослушать старую');
+    await page.locator('#audio-new-preview').click(); await page.waitForFunction(() => document.querySelector('#audio-new-preview').textContent === 'Прослушать новую');
+    await page.locator('[name=recordingChoice][value=old]').check();
+    await page.locator('#card-form [type=submit]').click(); await page.locator('#card-form').waitFor({state:'detached'});
+    assert.equal((await dbRead()).cards[recordedCard.id].audioId,old);
+    await page.locator(`[data-action=edit-card][data-card-id="${recordedCard.id}"]`).click();
+    await page.locator('#audio-file').setInputFiles({name:'replacement.wav',mimeType:'audio/wav',buffer:recordedBytes});
+    await page.locator('#recording-choice').waitFor({state:'visible'});
+    await page.locator('[name=recordingChoice][value=new]').check();
+    await page.screenshot({path:'artifacts/recording-editor.png',fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    assert.ok(await page.locator('#dialog').evaluate(e=>e.scrollWidth<=e.clientWidth+1));
+    await page.screenshot({path:'artifacts/recording-editor-mobile.png',fullPage:true});
+    await page.setViewportSize({width:1180,height:820});
+    await page.locator('#card-form [type=submit]').click(); await page.locator('#card-form').waitFor({state:'detached'});
+    assert.notEqual((await dbRead()).cards[recordedCard.id].audioId,old);
+    assert.equal(await page.evaluate(async oldId=>{const {AlbumRepository}=await import('./storage.js'),r=await new AlbumRepository().open(),s=await r.load();r.db.close();return !s.recordings.has(oldId)&&s.recordings.size===1;},old),true);
+  });
+  await check('Recording-only messages play sequentially without any TTS voice and stop cleanly', async () => {
+    await page.getByRole('button',{name:'Настройки альбома',exact:true}).click();
+    await page.locator('[name=speechMode]').selectOption('recordings'); await page.locator('[name=copyCards]').check();
+    await page.locator('#settings-form [type=submit]').click(); await page.locator('#settings-form').waitFor({state:'detached'});
+    await page.getByRole('button',{name:'Готово',exact:true}).click();
+    await page.evaluate(()=>{
+      window.__savedVoices=window.__voices;window.__voices=[];window.__clipEvents=[];
+      const original=AudioContext.prototype.createBufferSource;
+      AudioContext.prototype.createBufferSource=function(...args){const source=original.apply(this,args),start=source.start;source.start=function(...a){window.__clipEvents.push('start');return start.apply(this,a);};source.addEventListener('ended',()=>window.__clipEvents.push('end'));return source;};
+    });
+    await card(recordedCard.title).click();await card(recordedCard.title).click();
+    const before=await page.evaluate(()=>window.__speechCalls.length);
+    await page.getByRole('button',{name:'Произнести',exact:true}).click();
+    await page.waitForFunction(()=>window.__clipEvents.length===4);
+    assert.deepEqual(await page.evaluate(()=>window.__clipEvents),['start','end','start','end']);
+    assert.equal(await page.evaluate(()=>window.__speechCalls.length),before);
+    await page.evaluate(()=>{window.__clipEvents=[];});
+    await page.getByRole('button',{name:'Произнести',exact:true}).click();await page.waitForFunction(()=>window.__clipEvents.includes('start'));
+    await page.getByRole('button',{name:'Остановить',exact:true}).click();await page.waitForTimeout(1000);
+    assert.equal((await page.evaluate(()=>window.__clipEvents)).filter(e=>e==='start').length,1);
+    const a=await dbRead(),missing=a.cards[a.tabs[0].columns.flatMap(c=>c.cardIds).find(id=>id!==recordedCard.id)];
+    await card(missing.title).click(); await page.getByRole('button',{name:'Произнести',exact:true}).click();
+    assert.ok((await page.locator('#toast').textContent()).includes('Нет записи'));
+    assert.equal(await page.evaluate(()=>window.__speechCalls.length),before);
+    await page.locator('[data-action=clear-line]').click();await page.locator('#confirm-dialog [data-confirm=yes]').click();
+    await page.evaluate(()=>{window.__voices=window.__savedVoices;});
+  });
+  await check('Mixed recording and TTS segments wait for completion in message order',async()=>{
+    await gate();await page.getByRole('button',{name:'Настройки альбома',exact:true}).click();
+    await page.locator('[name=speechMode]').selectOption('preferRecordings');
+    await page.locator('#settings-form [type=submit]').click();await page.locator('#settings-form').waitFor({state:'detached'});
+    await page.getByRole('button',{name:'Готово',exact:true}).click();
+    await page.evaluate(()=>{window.__clipEvents=[];const original=speechSynthesis.speak;speechSynthesis.speak=u=>{window.__clipEvents.push('tts-start');original(u);u.onstart?.();setTimeout(()=>{window.__clipEvents.push('tts-end');u.onend?.();},30);};});
+    const a=await dbRead(),other=a.cards[a.tabs[0].columns.flatMap(c=>c.cardIds).find(id=>id!==recordedCard.id)];
+    await card(recordedCard.title).click();await card(other.title).click();await card(recordedCard.title).click();
+    await page.getByRole('button',{name:'Произнести',exact:true}).click();await page.waitForFunction(()=>window.__clipEvents.length===6);
+    assert.deepEqual(await page.evaluate(()=>window.__clipEvents),['start','end','tts-start','tts-end','start','end']);
+    await gate();
+  });
+  await check('Recorded clips and chosen take survive backup, reset, import and reload',async()=>{
+    await page.getByRole('button',{name:'Настройки альбома',exact:true}).click();
+    const promise=page.waitForEvent('download');await page.locator('#export').click();const download=await promise;await download.saveAs('artifacts/recordings-backup.json');
+    const before=await dbRead(),backup=JSON.parse(await readFile('artifacts/recordings-backup.json','utf8'));assert.equal(backup.version,2);assert.equal(Object.keys(backup.recordings).length,1);
+    await page.getByText('Удаление локальных данных',{exact:true}).click();await page.locator('#reset-album').click();await page.locator('#confirm-dialog [data-confirm=yes]').click();await page.locator('#settings-form').waitFor({state:'detached'});
+    await page.getByRole('button',{name:'Настройки альбома',exact:true}).click();await page.locator('#import-file').setInputFiles('artifacts/recordings-backup.json');await page.locator('#confirm-dialog [data-confirm=yes]').click();await page.locator('#settings-form').waitFor({state:'detached'});
+    const after=await dbRead();delete before.revision;delete after.revision;assert.deepEqual(after,before);
+    await page.reload();await page.locator('#board .card').first().waitFor();await gate();
+    assert.equal(await page.evaluate(async()=>{const {AlbumRepository}=await import('./storage.js'),r=await new AlbumRepository().open(),d=await r.load();r.db.close();return d.recordings.size;}),1);
+  });
+  await check('Audio garbage collection preserves shared clips and failed writes are atomic',async()=>{
+    const isolated=await browser.newContext(),q=await isolated.newPage();
+    try{await q.goto(url);await q.locator('#board .card').first().waitFor();
+      assert.equal(await q.evaluate(async bytes=>{
+        const {AlbumRepository}=await import('./storage.js'),{removeCard}=await import('./domain.js'),r=await new AlbumRepository().open();
+        let s=await r.load(),a=s.album;const id=Object.keys(a.cards)[0];a.cards[id].audioId='shared-recording';
+        a.cards.copy={...a.cards[id],id:'copy'};a.tabs[0].columns[0].cardIds.push('copy');
+        a=await r.save(a,a.revision,new Map(),false,new Map([['shared-recording',new Blob([new Uint8Array(bytes)],{type:'audio/wav'})]]));
+        removeCard(a,id);a=await r.save(a,a.revision);if(!(await r.load()).recordings.has('shared-recording'))return false;
+        removeCard(a,'copy');a=await r.save(a,a.revision);if((await r.load()).recordings.size!==0)return false;
+        const bad=structuredClone(a);bad.cards[Object.keys(bad.cards)[0]].audioId='missing';let failed=false;
+        try{await r.save(bad,a.revision);}catch{failed=true;}
+        const after=await r.load();r.db.close();return failed&&JSON.stringify(after.album)===JSON.stringify(a);
+      },[...recordedBytes]),true);
+    }finally{await isolated.close();}
+  });
+  await check('An existing schema-1 IndexedDB album and photo migrate without loss',async()=>{
+    const isolated=await browser.newContext(),q=await isolated.newPage();
+    try{
+      await q.route(url+'legacy-shell',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Migration</title>'}));await q.goto(url+'legacy-shell');
+      const bytes=[...await readFile('public/assets/icon-512.png')];
+      const original=await q.evaluate(async bytes=>{
+        const {createAlbum}=await import('./domain.js');const a=createAlbum();a.version=1;delete a.settings.speechMode;a.name='Старый альбом';a.cards[Object.keys(a.cards)[0]].imageId='legacy-photo';
+        const request=indexedDB.open('pecsoteka',1);request.onupgradeneeded=()=>{request.result.createObjectStore('album');request.result.createObjectStore('images');};
+        const db=await new Promise((resolve,reject)=>{request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+        const tx=db.transaction(['album','images'],'readwrite');tx.objectStore('album').put(a,'current');tx.objectStore('images').put(new Blob([new Uint8Array(bytes)],{type:'image/png'}),'legacy-photo');
+        await new Promise((resolve,reject)=>{tx.oncomplete=resolve;tx.onerror=reject;});db.close();return a;
+      },bytes);
+      await q.goto(url);await q.locator('#board .card').first().waitFor();
+      const actual=await q.evaluate(async()=>{const {AlbumRepository}=await import('./storage.js'),r=await new AlbumRepository().open(),s=await r.load();r.db.close();return {album:s.album,hasPhoto:s.images.has('legacy-photo'),audio:s.recordings.size};});
+      assert.equal(actual.album.version,2);assert.equal(actual.album.name,original.name);assert.deepEqual(actual.album.tabs,original.tabs);assert.deepEqual(actual.album.cards,original.cards);assert.equal(actual.hasPhoto,true);assert.equal(actual.audio,0);
+    }finally{await isolated.close();}
+  });
   await check('IDB rejects stale writes without partial album or image mutation', async () => {
     assert.ok(await page.evaluate(async () => {
       const { AlbumRepository } = await import('./storage.js'), r = await new AlbumRepository().open();
@@ -264,20 +413,20 @@ try {
   await check('Real waiting worker: one adult update offer; deferred settings button; no child prompt', async () => {
     await page.setViewportSize({ width: 1180, height: 820 });
     const before = await dbRead();
-    updatesOverride=JSON.stringify({releases:[{version:'0.1.6',changes:['Второе пропущенное обновление']},{version:'0.1.2',changes:['Уже установлено']},{version:'0.1.5',changes:['Первое пропущенное обновление']}]});
-    swOverride = (await readFile(resolve(root, 'sw.js'), 'utf8')).replace(/const CACHE = '[^']+'/, "const CACHE = 'pecsoteka-update-acceptance'").replace(/const APP_VERSION = '[^']+'/,"const APP_VERSION = '0.1.6'");
+    updatesOverride=JSON.stringify({releases:[{version:'0.2.2',changes:['Второе пропущенное обновление']},{version:'0.1.2',changes:['Уже установлено']},{version:'0.2.1',changes:['Первое пропущенное обновление']}]});
+    swOverride = (await readFile(resolve(root, 'sw.js'), 'utf8')).replace(/const CACHE = '[^']+'/, "const CACHE = 'pecsoteka-update-acceptance'").replace(/const APP_VERSION = '[^']+'/,"const APP_VERSION = '0.2.2'");
     await page.evaluate(async () => { const r = await navigator.serviceWorker.getRegistration(); await r.update(); });
     await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration()).waiting);
     await assertCount('#dialog[open]', 0);
     await gate(); await page.getByRole('heading', { name: 'Доступно обновление', exact: true }).waitFor();
-    assert.deepEqual(await page.locator('#dialog [data-release-version]').evaluateAll(els=>els.map(e=>e.dataset.releaseVersion)),['0.1.5','0.1.6']);
+    assert.deepEqual(await page.locator('#dialog [data-release-version]').evaluateAll(els=>els.map(e=>e.dataset.releaseVersion)),['0.2.1','0.2.2']);
     await page.screenshot({path:'artifacts/update-changes.png',fullPage:true});
     await page.getByRole('button', { name: 'Позже', exact: true }).click();
     await page.getByRole('button', { name: 'Готово', exact: true }).click();
     await gate(); await assertCount('#dialog[open]', 0);
     await page.getByRole('button', { name: 'Настройки альбома', exact: true }).click();
     assert.equal(await page.locator('#update-banner').isVisible(), true);
-    assert.deepEqual(await page.locator('#update-banner [data-release-version]').evaluateAll(els=>els.map(e=>e.dataset.releaseVersion)),['0.1.5','0.1.6']);
+    assert.deepEqual(await page.locator('#update-banner [data-release-version]').evaluateAll(els=>els.map(e=>e.dataset.releaseVersion)),['0.2.1','0.2.2']);
     await page.locator('#settings-form [name=name]').fill('Несохранённое имя');
     await page.locator('#dialog [data-action=close-dialog]').first().click();
     await page.locator('#confirm-dialog [data-confirm=no]').last().click();

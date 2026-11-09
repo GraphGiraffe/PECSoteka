@@ -2,6 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAlbum, numberToWords, addToLine, homeOf, moveCard, validateAlbum, removeCard, phrase } from '../public/domain.js';
 
+test('schema 1 albums upgrade without losing card images, settings or addresses', () => {
+  const old = createAlbum(); old.version = 1; delete old.settings.speechMode;
+  const id = Object.keys(old.cards)[0]; old.cards[id].imageId = 'existing-photo';
+  const before = structuredClone(old), migrated = validateAlbum(old);
+  assert.equal(migrated.version, 2); assert.equal(migrated.settings.speechMode, 'preferRecordings');
+  assert.deepEqual(migrated.tabs, before.tabs); assert.deepEqual(migrated.cards, before.cards);
+  assert.equal(migrated.revision, before.revision);
+});
+test('recording references and playback modes survive validation and reject unsafe values', () => {
+  const album = createAlbum(), id = Object.keys(album.cards)[0];
+  album.cards[id].audioId = 'my-recording'; album.settings.speechMode = 'recordings';
+  assert.equal(validateAlbum(album).cards[id].audioId, 'my-recording');
+  album.cards[id].audioId = '__proto__'; assert.throws(() => validateAlbum(album));
+  album.cards[id].audioId = 'my-recording'; album.settings.speechMode = 'unknown'; assert.throws(() => validateAlbum(album));
+});
+
 test('Russian four-digit gate numbers have correct gender and thousands declension', () => {
   for (const [n, text] of [[1000, 'одна тысяча'], [1001, 'одна тысяча один'], [2002, 'две тысячи два'], [2437, 'две тысячи четыреста тридцать семь'], [3011, 'три тысячи одиннадцать'], [4019, 'четыре тысячи девятнадцать'], [5000, 'пять тысяч'], [6110, 'шесть тысяч сто десять'], [9999, 'девять тысяч девятьсот девяносто девять']]) assert.equal(numberToWords(n), text);
   assert.throws(() => numberToWords(999), RangeError);

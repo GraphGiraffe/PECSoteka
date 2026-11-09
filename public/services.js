@@ -51,8 +51,8 @@ export class Speech {
       check();
     });
   }
-  stop() { this.token++; this.cancelWait?.(); window.speechSynthesis?.cancel(); this.status(false); }
-  async say(text) {
+  stop() { this.token++; this.cancelWait?.(); this.finishUtterance?.(); this.finishUtterance = null; window.speechSynthesis?.cancel(); this.status(false); }
+  async say(text, { waitForEnd = false } = {}) {
     this.stop();
     if (!text) return;
     if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) throw Error('На этом устройстве нет синтеза речи');
@@ -66,9 +66,18 @@ export class Speech {
     if (!voice) throw Error('Русский голос пока недоступен. Проверьте системные настройки синтеза речи или выберите голос в настройках альбома.');
     const u = new SpeechSynthesisUtterance(text);
     u.voice = voice; u.lang = s.voiceLang; u.rate = s.rate; u.pitch = s.pitch; u.volume = s.speechVolume;
+    let finish, reject;
+    const completed = waitForEnd ? new Promise((resolve, no) => { finish = resolve; reject = no; }) : null;
+    const end = error => {
+      if (this.token === token) { this.status(false); this.finishUtterance = null; }
+      if (error && reject) reject(Error('Не удалось произнести фразу системным голосом')); else finish?.();
+    };
+    this.finishUtterance = finish;
     u.onstart = () => { if (this.token === token) this.status(true); };
-    u.onend = u.onerror = () => { if (this.token === token) this.status(false); };
+    u.onend = () => end();
+    u.onerror = e => end(this.token === token && !['canceled', 'interrupted'].includes(e.error));
     window.speechSynthesis.speak(u);
+    if (completed) await completed;
   }
 }
 export async function readPhoto(file) {

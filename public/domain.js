@@ -1,12 +1,12 @@
-export const VERSION = '0.1.4';
-export const SCHEMA = 1;
+export const VERSION = '0.2.0-preview.1';
+export const SCHEMA = 2;
 export const uid = () => crypto.randomUUID();
 export const defaults = Object.freeze({
   cardScale: 100, lineCardScale: 90, editGate: 'spokenNumber',
   tapToAdd: true, copyCards: false, reorderLine: true, showClear: true,
   speakOnAdd: false, actionSounds: true, soundVolume: 0.35,
   motion: 'full', voiceLang: 'ru-RU', voiceURI: '', rate: 0.9,
-  pitch: 1, speechVolume: 1, autoLock: 10
+  pitch: 1, speechVolume: 1, speechMode: 'preferRecordings', autoLock: 10
 });
 
 const groups = [
@@ -112,7 +112,7 @@ const fail = () => { throw Error('Файл альбома повреждён и�
 const isId = v => typeof v === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(v) && !['__proto__', 'constructor', 'prototype'].includes(v);
 const text = (v, max = 160) => typeof v === 'string' && v.length <= max;
 export function validateAlbum(input) {
-  if (!input || input.version !== SCHEMA || !isId(input.id) || !text(input.name) || !input.tabs?.length || input.tabs.length > 40 || !input.cards || Array.isArray(input.cards)) fail();
+  if (!input || ![1, SCHEMA].includes(input.version) || !isId(input.id) || !text(input.name) || !input.tabs?.length || input.tabs.length > 40 || !input.cards || Array.isArray(input.cards)) fail();
   const cards = Object.entries(input.cards);
   if (cards.length > 2000) fail();
   const seen = new Set(), ids = new Set();
@@ -134,6 +134,7 @@ export function validateAlbum(input) {
   for (const [id, card] of cards) {
     if (!isId(id) || card.id !== id || !seen.has(id) || !text(card.title) || !text(card.speechText, 500) || !card.speechText.trim()) fail();
     if (card.imageId && !isId(card.imageId)) fail();
+    if (card.audioId && !isId(card.audioId)) fail();
     if (card.icon && !builtinIcons.includes(card.icon)) fail();
     if (card.showLabel !== undefined && typeof card.showLabel !== 'boolean') fail();
     if (card.imageFit !== undefined && !['cover', 'contain'].includes(card.imageFit)) fail();
@@ -143,10 +144,10 @@ export function validateAlbum(input) {
     if (!Number.isFinite(s[key]) || s[key] < min || s[key] > max) fail();
   }
   for (const key of ['tapToAdd', 'copyCards', 'reorderLine', 'showClear', 'speakOnAdd', 'actionSounds']) if (typeof s[key] !== 'boolean') fail();
-  if (!['spokenNumber', 'math'].includes(s.editGate) || !['full', 'reduced', 'none'].includes(s.motion) || !text(s.voiceURI, 500) || s.voiceLang !== 'ru-RU') fail();
+  if (!['spokenNumber', 'math'].includes(s.editGate) || !['full', 'reduced', 'none'].includes(s.motion) || !text(s.voiceURI, 500) || s.voiceLang !== 'ru-RU' || !['preferRecordings', 'recordings', 'tts'].includes(s.speechMode)) fail();
   // Whitelist fields: exports never import executable values or external image URLs.
   return { id: input.id, name: input.name, version: SCHEMA, revision: Number.isSafeInteger(input.revision) && input.revision >= 0 ? input.revision : 0,
     tabs: input.tabs.map(t => ({ id: t.id, title: t.title, color: t.color, order: t.order, columns: t.columns.map(c => ({ id: c.id, order: c.order, cardIds: [...c.cardIds] })) })),
-    cards: Object.fromEntries(cards.map(([id, c]) => [id, { id, title: c.title, speechText: c.speechText, ...(c.icon ? { icon: c.icon } : {}), ...(c.imageId ? { imageId: c.imageId } : {}), showLabel: c.showLabel !== false, imageFit: c.imageFit || 'contain' }])),
+    cards: Object.fromEntries(cards.map(([id, c]) => [id, { id, title: c.title, speechText: c.speechText, ...(c.icon ? { icon: c.icon } : {}), ...(c.imageId ? { imageId: c.imageId } : {}), ...(c.audioId ? { audioId: c.audioId } : {}), showLabel: c.showLabel !== false, imageFit: c.imageFit || 'contain' }])),
     settings: Object.fromEntries(Object.keys(defaults).map(k => [k, s[k]])) };
 }

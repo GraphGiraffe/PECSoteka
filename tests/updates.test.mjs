@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { releasesBetween } from '../public/pwa.js';
 
+test('preview builds can update to later previews and the stable release in order', () => {
+  const history = ['0.2.0','0.2.0-preview.10','0.2.0-preview.2','0.2.0-preview.1'].map(version => ({ version, changes: ['Update'] }));
+  assert.deepEqual(releasesBetween(history, '0.2.0-preview.1', '0.2.0').map(r => r.version), ['0.2.0-preview.2','0.2.0-preview.10','0.2.0']);
+});
+
 test('all skipped releases are shown in ascending version order', () => {
   const history = ['0.1.3','0.1.1','0.1.2','0.1.0'].map(version => ({ version, changes:[`Изменение ${version}`] }));
   assert.deepEqual(releasesBetween(history,'0.1.0','0.1.3').map(r=>r.version),['0.1.1','0.1.2','0.1.3']);
