@@ -1,8 +1,10 @@
-import { VERSION, uid, createAlbum, builtinIcons, numberToWords, randomInt, addToLine, homeOf, columnAt, moveCard, removeCard, phrase } from './domain.js';
+import { VERSION, uid, createAlbum, builtinIcons, numberToWords, randomInt, addToLine, homeOf, columnAt, moveCard, removeCard } from './domain.js';
 import { AlbumRepository, exportAlbum, importAlbum } from './storage.js';
 import { Feedback, Speech, readPhoto, cropPhoto } from './services.js';
 import { DragController, enableWorkspacePan } from './drag.js';
 import { PWAController } from './pwa.js';
+import { CardPlayback } from './audio.js';
+import { CardAudioEditor } from './recording-editor.js';
 
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -28,9 +30,9 @@ const btn = (action, title, name, extra = '') => `<button type="button" class="i
 const checkbox = (name, label, checked) => `<label class="check"><input type="checkbox" name="${name}" ${checked ? 'checked' : ''}>${label}</label>`;
 const range = (name, label, value, min, max, step = 1, suffix = '') => `<label class="field"><span>${label} <output>${value}${suffix}</output></span><input type="range" name="${name}" min="${min}" max="${max}" step="${step}" value="${value}" data-suffix="${suffix}"></label>`;
 
-let repo, album, images = new Map(), imageURLs = new Map(), activeTab;
+let repo, album, images = new Map(), recordings = new Map(), imageURLs = new Map(), activeTab;
 let editing = false, communication = [], buffer = [], busy = false, speechActive = false;
-let feedback, speech, drag, pwa, lastActivity = Date.now();
+let feedback, speech, playback, drag, pwa, lastActivity = Date.now();
 let holdTimer, holdFrame, holdStart = 0, gateValue, gateFailures = 0, gateBlockedUntil = 0;
 let modalCleanup = null, returnFocus = null, newlyAdded = '', restored = '';
 let toastTimer;
@@ -100,15 +102,19 @@ function render() {
   newlyAdded = restored = '';
   queueMicrotask(maybeOfferUpdate);
 }
-async function mutate(change, newImages = new Map(), replaceImages = false) {
+async function mutate(change, newImages = new Map(), replaceImages = false, newRecordings = new Map(), replaceRecordings = false) {
   if (!editing || busy) { if (busy) toast('Подождите, изменения сохраняются'); return false; }
   busy = true;
   try {
     const next = await change(structuredClone(album));
-    album = await repo.save(next, album.revision, newImages, replaceImages);
+    playback.stop();
+    album = await repo.save(next, album.revision, newImages, replaceImages, newRecordings, replaceRecordings);
     if (replaceImages) images = new Map(newImages); else for (const [id, blob] of newImages) images.set(id, blob);
     const used = new Set(Object.values(album.cards).map(c => c.imageId));
     for (const id of images.keys()) if (!used.has(id)) images.delete(id);
+    if (replaceRecordings) recordings = new Map(newRecordings); else for (const [id, blob] of newRecordings) recordings.set(id, blob);
+    const usedAudio = new Set(Object.values(album.cards).map(c => c.audioId));
+    for (const id of recordings.keys()) if (!usedAudio.has(id)) recordings.delete(id);
     refreshImages();
     communication = communication.filter(i => album.cards[i.cardId]).map(i => ({ ...i, source: homeOf(album, i.cardId) }));
     buffer = buffer.filter(i => album.cards[i.cardId]);
@@ -127,17 +133,17 @@ function selectCard(cardId) {
   if (editing) buffer = next; else communication = next;
   newlyAdded = next.at(-1).instanceId; render();
   $('.line-items').scrollLeft = $('.line-items').scrollWidth;
-  if (!editing && album.settings.speakOnAdd) speak(album.cards[cardId].speechText);
+  if (!editing && album.settings.speakOnAdd) speak([album.cards[cardId]]);
   $('#live').textContent = `${album.cards[cardId].title}: ${editing ? 'в буфере переноса' : 'добавлено в сообщение'}`;
   return true;
 }
 function returnItem(instanceId) {
   const item = line().find(i => i.instanceId === instanceId);
   if (!item) return false;
-  if (editing) buffer = buffer.filter(i => i.instanceId !== instanceId); else { speech.stop(); communication = communication.filter(i => i.instanceId !== instanceId); }
+  if (editing) buffer = buffer.filter(i => i.instanceId !== instanceId); else { playback.stop(); communication = communication.filter(i => i.instanceId !== instanceId); }
   restored = item.cardId; render(); $('#live').textContent = 'Карточка возвращена на своё место'; return true;
 }
-async function speak(text) { try { await speech.say(text); } catch (error) { toast(error.message); } }
+async function speak(value) { try { if (Array.isArray(value)) await playback.play(value, recordings, album.settings); else { playback.stop(); await speech.say(value); } } catch (error) { toast(error.message); } }
 
 let confirmationQueue = Promise.resolve();
 function confirmAction(message) {
@@ -203,7 +209,7 @@ function openGate() {
       if (gateFailures >= 3) { gateBlockedUntil = Date.now() + 5000; gateFailures = 0; }
       $('#gate-error').textContent = 'Попробуйте ещё раз. Введите ответ цифрами.'; return;
     }
-    gateFailures = 0; gateValue = null; closeDialog(); editing = true; buffer = []; lastActivity = Date.now(); speech.stop(); feedback.play('mode'); render();
+    gateFailures = 0; gateValue = null; closeDialog(); editing = true; buffer = []; lastActivity = Date.now(); playback.stop(); feedback.play('mode'); render();
     $('[data-action="finish"]')?.focus();
     pwa?.check().catch(() => {});
   };
@@ -247,7 +253,7 @@ async function acceptDrop(item, zone) {
     const list = [...line()], from = list.findIndex(i => i.instanceId === item.instanceId);
     if (from < 0) return false;
     const [entry] = list.splice(from, 1); list.splice(zone.index - (zone.index > from ? 1 : 0), 0, entry);
-    if (editing) buffer = list; else { speech.stop(); communication = list; } render(); return true;
+    if (editing) buffer = list; else { playback.stop(); communication = list; } render(); return true;
   }
   if (zone.kind === 'return' && !editing) return returnItem(item.instanceId);
   if (zone.kind === 'album' && editing) {
@@ -279,7 +285,8 @@ async function openCardEditor(cardId, address) {
   if (!editing) return;
   const original = cardId ? album.cards[cardId] : { title: '', speechText: '', icon: '', showLabel: true, imageFit: 'contain' };
   let photo = null, selectedIcon = original.icon || '', removeImage = false, cropURL = '', photoGeneration = 0;
-  const cleanup = () => { photoGeneration++; photo?.close(); if (cropURL) URL.revokeObjectURL(cropURL); };
+  let audioEditor;
+  const cleanup = () => { audioEditor?.dispose(); photoGeneration++; photo?.close(); if (cropURL) URL.revokeObjectURL(cropURL); };
   openDialog(cardId ? 'Карточка' : 'Новая карточка', `<form id="card-form">
     <div class="photo-preview" id="photo-preview">${imageHTML(original) || icon('photo')}</div>
     <div class="photo-buttons"><button type="button" class="button secondary" id="gallery">${icon('photo')}Галерея</button><button type="button" class="button secondary" id="camera">${icon('camera')}Камера</button><button type="button" class="button ghost" id="text-only">Только текст</button></div>
@@ -288,10 +295,12 @@ async function openCardEditor(cardId, address) {
     <details style="margin-top:14px"><summary class="note">Выбрать стартовую пиктограмму</summary><div class="icon-picker">${builtinIcons.map(id => `<button type="button" class="icon-choice ${id === selectedIcon ? 'active' : ''}" data-icon="${id}" aria-label="Пиктограмма ${esc(createIconName(id))}"><img src="./assets/cards/${id}.svg" alt=""></button>`).join('')}</div></details>
     <label class="field">Подпись<input name="title" maxlength="160" value="${esc(original.title)}" required autofocus></label>
     <label class="field">Что произнести<input name="speechText" maxlength="500" value="${esc(original.speechText)}" placeholder="По умолчанию — подпись"><small>Например, подпись «Вода», а произнести «Я хочу воды».</small></label>
+    <div id="card-recording"></div>
     ${checkbox('showLabel', 'Показывать подпись на карточке', original.showLabel !== false)}
     <p id="photo-error" class="error" aria-live="polite"></p>
     <div class="dialog-actions spread">${cardId ? `<div class="row"><button type="button" class="button danger" id="delete-card">Удалить</button><button type="button" class="button ghost" id="copy-card">Копия</button></div>` : ''}<button class="button" type="submit">Сохранить</button></div></form>`, { cleanup });
   const form = $('#card-form');
+  audioEditor = new CardAudioEditor($('#card-recording'), recordings.get(original.audioId) || null, playback, album.settings, () => { $('#dialog').dataset.dirty = 'yes'; });
   const preview = async () => {
     if (!photo) return;
     const gen = ++photoGeneration;
@@ -321,14 +330,15 @@ async function openCardEditor(cardId, address) {
     form.querySelectorAll('[data-icon]').forEach(b => b.classList.toggle('active', b === button));
   }; });
   form.onsubmit = async e => {
-    e.preventDefault(); if (busy) return;
+    e.preventDefault(); if (busy || audioEditor.busy) return;
     const title = form.elements.title.value.trim(), speechText = form.elements.speechText.value.trim() || title;
     if (!title || !speechText) return;
-    const id = cardId || uid(), next = { ...original, id, title, speechText, showLabel: form.elements.showLabel.checked }, newImages = new Map();
+    const id = cardId || uid(), next = { ...original, id, title, speechText, showLabel: form.elements.showLabel.checked }, newImages = new Map(), newRecordings = new Map();
+    if (audioEditor.changed) { delete next.audioId; if (audioEditor.blob) { next.audioId = uid(); newRecordings.set(next.audioId, audioEditor.blob); } }
     try {
       if (photo) { const imageId = uid(); newImages.set(imageId, await cropPhoto(photo, Number(form.elements.zoom.value), Number(form.elements.cropX.value), Number(form.elements.cropY.value))); next.imageId = imageId; next.imageFit = 'cover'; delete next.icon; }
       else if (removeImage || selectedIcon) { delete next.imageId; if (selectedIcon) next.icon = selectedIcon; else delete next.icon; next.imageFit = 'contain'; }
-      const success = await mutate(a => { a.cards[id] = next; if (!cardId) { const col = columnAt(a, address); if (!col) throw Error('Столбик не найден'); col.cardIds.splice(Math.min(address.index, col.cardIds.length), 0, id); } return a; }, newImages);
+      const success = await mutate(a => { a.cards[id] = next; if (!cardId) { const col = columnAt(a, address); if (!col) throw Error('Столбик не найден'); col.cardIds.splice(Math.min(address.index, col.cardIds.length), 0, id); } return a; }, newImages, false, newRecordings);
       if (success) { closeDialog(); toast('Карточка сохранена'); }
     } catch (error) { $('#photo-error').textContent = error.message; }
   };
@@ -387,6 +397,7 @@ function openSettings() {
     <label class="field">Анимации<select name="motion"><option value="full">Полные</option><option value="reduced">Сокращённые</option><option value="none">Без анимаций</option></select><small>Системное снижение движения учитывается автоматически.</small></label>
     <h3 class="section-title">Общение</h3>${checkbox('tapToAdd', 'Нажатие добавляет карточку в строку', s.tapToAdd)}${checkbox('copyCards', 'Оставлять карточку в альбоме, разрешать повторы', s.copyCards)}${checkbox('reorderLine', 'Разрешать менять порядок карточек в сообщении', s.reorderLine)}${checkbox('showClear', 'Показывать кнопку очистки сообщения', s.showClear)}
     <h3 class="section-title">Речь и звуки</h3>${checkbox('speakOnAdd', 'Произносить карточку при добавлении', s.speakOnAdd)}${checkbox('actionSounds', 'Мягкие звуки действий', s.actionSounds)}
+    <label class="field">Озвучивание карточек<select name="speechMode"><option value="preferRecordings">Мои записи, иначе синтез</option><option value="recordings">Только мои записи</option><option value="tts">Только синтез речи</option></select><small>Записи добавляются в редакторе каждой карточки.</small></label>
     <label class="field">Русский голос<select name="voiceURI" id="voice-select"></select><small id="voice-note"></small></label>
     <details><summary class="note">Где установить голоса</summary><p class="note">Голоса устанавливаются в системных настройках. Android: Настройки → Специальные возможности → Синтез речи → параметры выбранного синтезатора → Установка голосовых данных → Русский. Названия пунктов могут отличаться.</p></details>
     <div class="settings-grid">${range('rate', 'Скорость речи', s.rate, .5, 2, .1)}${range('pitch', 'Высота голоса', s.pitch, .5, 2, .1)}${range('speechVolume', 'Громкость речи', s.speechVolume, 0, 1, .05)}${range('soundVolume', 'Громкость сигналов', s.soundVolume, 0, 1, .05)}</div>
@@ -397,11 +408,11 @@ function openSettings() {
     <p class="note" id="storage-info"></p><button type="button" class="button ghost" id="persist">Сохранять данные надёжнее</button>
     <h3 class="section-title">Приложение · ${VERSION}</h3><p class="lead">Цифровой коммуникативный альбом AAC. Стартовые пиктограммы — примеры: замените их понятными пользователю изображениями.</p>
     <div class="row"><button type="button" class="button ghost" id="install" ${pwa?.installed ? 'hidden' : ''}>На главный экран</button><button type="button" class="button ghost" id="update-app" ${pwa?.hasUpdate ? 'hidden' : ''}>Проверить обновление</button></div>
-    <p class="note">Камера доступна при разрешении браузера. Вместо камеры может открыться выбор файла. Фото не отправляются на сервер.</p>
-    <details><summary class="note">Удаление локальных данных</summary><p class="note">Удаляет все свои фото и карточки, возвращает стартовый альбом. Резервную копию сохраните заранее.</p><button type="button" class="button danger" id="reset-album">Удалить мои данные</button></details>
+    <p class="note">Камера доступна при разрешении браузера. Вместо камеры может открыться выбор файла. Фото и озвучки не отправляются на сервер.</p>
+    <details><summary class="note">Удаление локальных данных</summary><p class="note">Удаляет все свои фото, озвучки и карточки, возвращает стартовый альбом. Резервную копию сохраните заранее.</p><button type="button" class="button danger" id="reset-album">Удалить мои данные</button></details>
     <p class="error" id="settings-error" aria-live="polite"></p><div class="dialog-actions"><button type="button" class="button ghost" data-action="close-dialog">Отмена</button><button class="button" type="submit">Сохранить настройки</button></div></form>`);
   const form = $('#settings-form');
-  for (const key of ['motion', 'editGate', 'autoLock']) form.elements[key].value = s[key];
+  for (const key of ['motion', 'editGate', 'autoLock', 'speechMode']) form.elements[key].value = s[key];
   const voices = () => {
     if (!form.isConnected) return;
     const list = speech.voices(), previous = form.elements.voiceURI.value || s.voiceURI;
@@ -411,12 +422,12 @@ function openSettings() {
     $('#voice-note').textContent = list.length ? 'Сетевой голос используется только после вашего выбора.' : 'Список голосов пока пуст: он может ещё загружаться. Голоса можно проверить в системных настройках синтеза речи.';
   };
   voices(); window.speechSynthesis?.addEventListener('voiceschanged', voices);
-  modalCleanup = () => { window.speechSynthesis?.removeEventListener('voiceschanged', voices); speech.stop(); speech.settings = album.settings; };
+  modalCleanup = () => { window.speechSynthesis?.removeEventListener('voiceschanged', voices); playback.stop(); speech.settings = album.settings; };
   const readSettings = () => {
     const next = { ...s };
     for (const key of ['cardScale', 'lineCardScale', 'rate', 'pitch', 'speechVolume', 'soundVolume', 'autoLock']) next[key] = Number(form.elements[key].value);
     for (const key of ['tapToAdd', 'copyCards', 'reorderLine', 'showClear', 'speakOnAdd', 'actionSounds']) next[key] = form.elements[key].checked;
-    for (const key of ['motion', 'editGate', 'voiceURI']) next[key] = form.elements[key].value;
+    for (const key of ['motion', 'editGate', 'voiceURI', 'speechMode']) next[key] = form.elements[key].value;
     return next;
   };
   form.onsubmit = async e => {
@@ -428,7 +439,7 @@ function openSettings() {
   $('#voice-test').onclick = () => { speech.settings = readSettings(); speak('Я хочу общаться'); };
   $('#export').onclick = async () => {
     try {
-      const blob = await exportAlbum(album, images), url = URL.createObjectURL(blob), a = document.createElement('a');
+      const blob = await exportAlbum(album, images, recordings), url = URL.createObjectURL(blob), a = document.createElement('a');
       a.href = url; a.download = `PECSoteka-${new Date().toISOString().slice(0, 10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
       toast('Резервная копия подготовлена');
     } catch (error) { $('#settings-error').textContent = error.message; }
@@ -440,7 +451,7 @@ function openSettings() {
       const imported = await importAlbum(file);
       if (!form.isConnected || !editing) return;
       if (!await confirmAction('Заменить текущий альбом данными из резервной копии? Несохранённые настройки будут отменены.')) return;
-      const success = await mutate(() => imported.album, imported.images, true);
+      const success = await mutate(() => imported.album, imported.images, true, imported.recordings, true);
       if (success) { communication = []; buffer = []; activeTab = album.tabs[0].id; closeDialog(); render(); toast('Альбом восстановлен. Проверьте способ входа для взрослого в настройках.'); }
     } catch (error) { if ($('#settings-error')) $('#settings-error').textContent = `Не удалось импортировать. ${error.message}`; }
   };
@@ -454,8 +465,8 @@ function openSettings() {
     } catch { toast('Не удалось проверить обновление. Проверьте подключение.'); }
   };
   $('#reset-album').onclick = async () => {
-    if (!await confirmAction('Удалить все свои карточки и фотографии на этом устройстве? Вернётся стартовый альбом.')) return;
-    const success = await mutate(() => createAlbum(), new Map(), true);
+    if (!await confirmAction('Удалить все свои карточки, фотографии и озвучки на этом устройстве? Вернётся стартовый альбом.')) return;
+    const success = await mutate(() => createAlbum(), new Map(), true, new Map(), true);
     if (success) { buffer = []; communication = []; activeTab = album.tabs[0].id; closeDialog(); render(); toast('Личные данные удалены. Открыт стартовый альбом.'); }
   };
 }
@@ -477,11 +488,11 @@ document.addEventListener('click', async e => {
   const action = el.dataset.action;
   try {
     if (action === 'tab') { activeTab = el.dataset.tabId; $('#board').scrollLeft = $('#board').scrollTop = 0; renderBoard(); renderTabs(); return; }
-    if (action === 'speak') { if (speechActive) speech.stop(); else speak(phrase(album, communication)); return; }
+    if (action === 'speak') { if (speechActive) playback.stop(); else speak(communication.map(item => album.cards[item.cardId])); return; }
     if (action === 'remove-line') { if (returnItem(el.dataset.instanceId)) feedback.play('return'); return; }
     if (action === 'clear-line') {
       if (line().length && await confirmAction(editing ? 'Вернуть все карточки из буфера на свои места?' : 'Очистить сообщение и вернуть карточки на место?')) {
-        speech.stop(); if (editing) buffer = []; else communication = []; render(); feedback.play('return');
+        playback.stop(); if (editing) buffer = []; else communication = []; render(); feedback.play('return');
       } return;
     }
     if (action === 'close-dialog') { requestCloseDialog(); return; }
@@ -545,16 +556,18 @@ document.addEventListener('focusout', e => { if (e.target.id === 'edit-gate') re
 window.addEventListener('blur', resetHold);
 document.addEventListener('visibilitychange', () => { if (document.hidden) { resetHold(); speech?.stop(); } });
 window.addEventListener('pagehide', () => { drag?.cancel(); resetHold(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) playback?.stop(); });
 document.addEventListener('pointerup', () => setTimeout(maybeOfferUpdate, 350));
 setInterval(() => { if (editing && !busy && album.settings.autoLock > 0 && Date.now() - lastActivity > album.settings.autoLock * 60000) finishEditing(true); }, 10000);
 
 async function init() {
   try {
     repo = await new AlbumRepository().open();
-    const loaded = await repo.load(); album = loaded.album; images = loaded.images;
+    const loaded = await repo.load(); album = loaded.album; images = loaded.images; recordings = loaded.recordings;
     activeTab = album.tabs[0].id; refreshImages();
     feedback = new Feedback(album.settings);
-    speech = new Speech(album.settings, active => { speechActive = active; if (album && !editing) renderLine(); });
+    speech = new Speech(album.settings, active => { speechActive = active || !!playback?.active; if (album && !editing) renderLine(); });
+    playback = new CardPlayback(speech, active => { speechActive = active; if (album && !editing) renderLine(); });
     drag = new DragController({
       identify: el => { if (busy || $('#dialog').open || (el.classList.contains('selected') && el.dataset.from === 'album')) return null; return { cardId: el.dataset.cardId, from: el.dataset.from, instanceId: el.dataset.instanceId }; },
       resolve: resolveDrop, highlight, drop: acceptDrop, cue: name => feedback.play(name), motion: () => album.settings.motion

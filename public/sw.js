@@ -1,6 +1,6 @@
-const CACHE = 'pecsoteka-0.1.4';
-const APP_VERSION = '0.1.4';
-const CORE = ['./', './index.html', './styles.css', './app.js', './domain.js', './storage.js', './services.js', './drag.js', './pwa.js', './updates.json', './manifest.webmanifest', './assets/brand.svg', './assets/icon-192.png', './assets/icon-512.png', './assets/icon-maskable.png'];
+const CACHE = 'pecsoteka-0.2.0-preview.1';
+const APP_VERSION = '0.2.0-preview.1';
+const CORE = ['./', './index.html', './styles.css', './app.js', './domain.js', './storage.js', './services.js', './drag.js', './pwa.js', './config.js', './audio.js', './recording-editor.js', './updates.json', './manifest.webmanifest', './assets/brand.svg', './assets/icon-192.png', './assets/icon-512.png', './assets/icon-maskable.png'];
 const ICONS = ['want','help','more','stop','yes','no','pause','toilet','water','apple','banana','bread','soup','milk','cookie','juice','play','book','walk','sleep','draw','music','wash','eat','mom','dad','me','home','park','school','happy','sad','hurt','hot','cold','tired'];
 const FILES = [...CORE, ...ICONS.map(id => `./assets/cards/${id}.svg`)];
 self.addEventListener('install', event => { event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES))); });
@@ -21,7 +21,9 @@ self.addEventListener('fetch', event => {
   // Once installed, the whole shell comes from one immutable cache version.
   // Updating is explicit so a new HTML shell cannot load old JS modules mid-session.
   event.respondWith(caches.open(CACHE).then(async cache => {
-    if (event.request.mode === 'navigate') return await cache.match('./index.html') || fetch(event.request);
+    // Static hosts may redirect index.html to ./; navigation rejects a cached
+    // redirected response, so use the canonical directory response first.
+    if (event.request.mode === 'navigate') return await cache.match('./') || await cache.match('./index.html') || fetch(event.request);
     return await cache.match(event.request) || fetch(event.request);
   }));
 });

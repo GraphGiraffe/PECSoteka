@@ -1,8 +1,23 @@
 // Installation and waiting-worker state stay separate from the user's album.
 import { VERSION } from './domain.js';
+import { STORAGE_PREFIX } from './config.js';
 
-const versionParts = v => typeof v === 'string' && /^\d+\.\d+\.\d+$/.test(v) ? v.split('.').map(Number) : null;
-const compare = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+const versionParts = v => {
+  const match = typeof v === 'string' && /^(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z0-9.-]+))?$/.exec(v);
+  return match ? [...match.slice(1, 4).map(Number), match[4]?.split('.') || []] : null;
+};
+const compare = (a, b) => {
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  if (!a[3].length || !b[3].length) return a[3].length ? -1 : b[3].length ? 1 : 0;
+  for (let i = 0; i < Math.max(a[3].length, b[3].length); i++) {
+    const x = a[3][i], y = b[3][i];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    const xn = /^\d+$/.test(x), yn = /^\d+$/.test(y);
+    return xn && yn ? Number(x) - Number(y) : xn !== yn ? xn ? -1 : 1 : x < y ? -1 : 1;
+  }
+  return 0;
+};
 export function releasesBetween(history, current, target) {
   const from = versionParts(current), to = versionParts(target);
   if (!from || !to || !Array.isArray(history)) return [];
@@ -37,8 +52,8 @@ export class PWAController {
     });
   }
   standalone() { return this.displayMode.matches || navigator.standalone === true; }
-  read(key) { try { return localStorage.getItem(`pecsoteka-${key}`) || ''; } catch { return ''; } }
-  write(key, value) { try { localStorage.setItem(`pecsoteka-${key}`, value); } catch { /* RAM state still works when metadata storage is blocked. */ } }
+  read(key) { try { return localStorage.getItem(`${STORAGE_PREFIX}${key}`) || ''; } catch { return ''; } }
+  write(key, value) { try { localStorage.setItem(`${STORAGE_PREFIX}${key}`, value); } catch { /* RAM state still works when metadata storage is blocked. */ } }
   setInstalled(value) { this.installed = value; this.write('installed', value ? 'yes' : ''); this.onChange(); }
   get hasUpdate() { return !!this.waiting; }
   get shouldNotify() { return this.hasUpdate && !!this.updateId && this.updateId !== this.notifiedId && this.updateId !== this.read('notified-update'); }
